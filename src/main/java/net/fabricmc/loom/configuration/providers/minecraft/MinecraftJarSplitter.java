@@ -39,7 +39,6 @@ import java.util.stream.Stream;
 
 import com.google.common.collect.Sets;
 
-import net.fabricmc.loom.configuration.mods.JarSplitter;
 import net.fabricmc.loom.util.FileSystemUtil;
 
 public class MinecraftJarSplitter implements AutoCloseable {
@@ -66,8 +65,8 @@ public class MinecraftJarSplitter implements AutoCloseable {
 		// Not something we expect, will require 3 jars, server, client and common.
 		assert entryData.serverOnlyEntries.isEmpty();
 
-		copyEntriesToJar(entryData.commonEntries, serverInputJar, commonOutputJar, "common");
-		copyEntriesToJar(entryData.clientOnlyEntries, clientInputJar, clientOnlyOutputJar, "client");
+		copyEntriesToJar(entryData.commonEntries, serverInputJar, commonOutputJar);
+		copyEntriesToJar(entryData.clientOnlyEntries, clientInputJar, clientOnlyOutputJar);
 	}
 
 	public void sharedEntry(String path) {
@@ -105,7 +104,7 @@ public class MinecraftJarSplitter implements AutoCloseable {
 		return entries;
 	}
 
-	private void copyEntriesToJar(Set<String> entries, Path inputJar, Path outputJar, String env) throws IOException {
+	private void copyEntriesToJar(Set<String> entries, Path inputJar, Path outputJar) throws IOException {
 		Files.deleteIfExists(outputJar);
 
 		try (FileSystemUtil.Delegate inputFs = FileSystemUtil.getJarFileSystem(inputJar);
@@ -125,14 +124,13 @@ public class MinecraftJarSplitter implements AutoCloseable {
 				Files.copy(inputPath, outputPath, StandardCopyOption.COPY_ATTRIBUTES);
 			}
 
-			writeManifest(outputFs, env);
+			writeManifest(outputFs);
 		}
 	}
 
-	private void writeManifest(FileSystemUtil.Delegate outputFs, String env) throws IOException {
+	private void writeManifest(FileSystemUtil.Delegate outputFs) throws IOException {
 		final Manifest manifest = new Manifest();
 		manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
-		manifest.getMainAttributes().putValue(JarSplitter.MANIFEST_SPLIT_ENV_NAME_KEY, env);
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		manifest.write(out);
 		Files.createDirectories(outputFs.get().getPath("META-INF"));

@@ -26,17 +26,13 @@ package net.fabricmc.loom.configuration;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 
 import org.gradle.api.NamedDomainObjectProvider;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
-import org.gradle.api.artifacts.ConfigurationContainer;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.AbstractCopyTask;
@@ -53,12 +49,10 @@ import net.fabricmc.loom.configuration.accesstransformer.AccessTransformerJarPro
 import net.fabricmc.loom.configuration.accesswidener.AccessWidenerJarProcessor;
 import net.fabricmc.loom.configuration.accesswidener.TransitiveAccessWidenerJarProcessor;
 import net.fabricmc.loom.configuration.ifaceinject.InterfaceInjectionProcessor;
+import net.fabricmc.loom.configuration.mods.ModJavadocProcessor;
 import net.fabricmc.loom.configuration.processors.JarProcessorManager;
-import net.fabricmc.loom.configuration.processors.ModJavadocProcessor;
 import net.fabricmc.loom.configuration.providers.forge.DependencyProviders;
-import net.fabricmc.loom.configuration.providers.forge.ForgeLibrariesProvider;
 import net.fabricmc.loom.configuration.providers.forge.ForgeProvider;
-import net.fabricmc.loom.configuration.providers.forge.ForgeRunsProvider;
 import net.fabricmc.loom.configuration.providers.forge.ForgeUniversalProvider;
 import net.fabricmc.loom.configuration.providers.forge.ForgeUserdevProvider;
 import net.fabricmc.loom.configuration.providers.forge.PatchProvider;
@@ -74,24 +68,20 @@ import net.fabricmc.loom.configuration.providers.minecraft.mapped.NamedMinecraft
 import net.fabricmc.loom.configuration.providers.minecraft.mapped.SrgMinecraftProvider;
 import net.fabricmc.loom.configuration.sources.ForgeSourcesRemapper;
 import net.fabricmc.loom.extension.MixinExtension;
-import net.fabricmc.loom.util.Checksum;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.ExceptionUtil;
 import net.fabricmc.loom.util.OperatingSystem;
-import net.fabricmc.loom.util.gradle.GradleUtils;
-import net.fabricmc.loom.util.gradle.SourceSetHelper;
 
 public final class CompileConfiguration {
 	private CompileConfiguration() {
 	}
 
 	public static void setupConfigurations(Project project) {
-		final ConfigurationContainer configurations = project.getConfigurations();
-		final LoomGradleExtension extension = LoomGradleExtension.get(project);
+		LoomGradleExtension extension = LoomGradleExtension.get(project);
 
 		project.afterEvaluate(project1 -> {
 			if (extension.shouldGenerateSrgTiny()) {
-				configurations.register(Constants.Configurations.SRG, configuration -> configuration.setTransitive(false));
+				extension.createLazyConfiguration(Constants.Configurations.SRG).configure(configuration -> configuration.setTransitive(false));
 			}
 
 			if (extension.isDataGenEnabled()) {
@@ -101,27 +91,27 @@ public final class CompileConfiguration {
 			}
 		});
 
-		configurations.register(Constants.Configurations.MOD_COMPILE_CLASSPATH, configuration -> configuration.setTransitive(true));
-		configurations.register(Constants.Configurations.MOD_COMPILE_CLASSPATH_MAPPED, configuration -> configuration.setTransitive(false));
-		NamedDomainObjectProvider<Configuration> serverDeps = configurations.register(Constants.Configurations.MINECRAFT_SERVER_DEPENDENCIES, configuration -> configuration.setTransitive(false));
-		configurations.register(Constants.Configurations.MINECRAFT_RUNTIME_DEPENDENCIES, configuration -> configuration.setTransitive(false));
-		configurations.register(Constants.Configurations.MINECRAFT_DEPENDENCIES, configuration -> {
+		extension.createLazyConfiguration(Constants.Configurations.MOD_COMPILE_CLASSPATH, configuration -> configuration.setTransitive(true));
+		extension.createLazyConfiguration(Constants.Configurations.MOD_COMPILE_CLASSPATH_MAPPED, configuration -> configuration.setTransitive(false));
+		NamedDomainObjectProvider<Configuration> serverDeps = extension.createLazyConfiguration(Constants.Configurations.MINECRAFT_SERVER_DEPENDENCIES, configuration -> configuration.setTransitive(false));
+		extension.createLazyConfiguration(Constants.Configurations.MINECRAFT_RUNTIME_DEPENDENCIES, configuration -> configuration.setTransitive(false));
+		extension.createLazyConfiguration(Constants.Configurations.MINECRAFT_DEPENDENCIES, configuration -> {
 			configuration.extendsFrom(serverDeps.get());
 			configuration.setTransitive(false);
 		});
-		configurations.register(Constants.Configurations.LOADER_DEPENDENCIES, configuration -> configuration.setTransitive(false));
-		configurations.register(Constants.Configurations.MINECRAFT, configuration -> configuration.setTransitive(false));
+		extension.createLazyConfiguration(Constants.Configurations.LOADER_DEPENDENCIES, configuration -> configuration.setTransitive(false));
+		extension.createLazyConfiguration(Constants.Configurations.MINECRAFT, configuration -> configuration.setTransitive(false));
 
 		if (extension.isForge()) {
-			configurations.register(Constants.Configurations.FORGE).configure(configuration -> configuration.setTransitive(false));
-			configurations.register(Constants.Configurations.FORGE_USERDEV).configure(configuration -> configuration.setTransitive(false));
-			configurations.register(Constants.Configurations.FORGE_INSTALLER).configure(configuration -> configuration.setTransitive(false));
-			configurations.register(Constants.Configurations.FORGE_UNIVERSAL).configure(configuration -> configuration.setTransitive(false));
-			configurations.register(Constants.Configurations.FORGE_DEPENDENCIES);
-			configurations.register(Constants.Configurations.FORGE_NAMED).configure(configuration -> configuration.setTransitive(false));
-			configurations.register(Constants.Configurations.FORGE_EXTRA).configure(configuration -> configuration.setTransitive(false));
-			configurations.register(Constants.Configurations.MCP_CONFIG).configure(configuration -> configuration.setTransitive(false));
-			configurations.register(Constants.Configurations.FORGE_RUNTIME_LIBRARY);
+			extension.createLazyConfiguration(Constants.Configurations.FORGE).configure(configuration -> configuration.setTransitive(false));
+			extension.createLazyConfiguration(Constants.Configurations.FORGE_USERDEV).configure(configuration -> configuration.setTransitive(false));
+			extension.createLazyConfiguration(Constants.Configurations.FORGE_INSTALLER).configure(configuration -> configuration.setTransitive(false));
+			extension.createLazyConfiguration(Constants.Configurations.FORGE_UNIVERSAL).configure(configuration -> configuration.setTransitive(false));
+			extension.createLazyConfiguration(Constants.Configurations.FORGE_DEPENDENCIES);
+			extension.createLazyConfiguration(Constants.Configurations.FORGE_NAMED).configure(configuration -> configuration.setTransitive(false));
+			extension.createLazyConfiguration(Constants.Configurations.FORGE_EXTRA).configure(configuration -> configuration.setTransitive(false));
+			extension.createLazyConfiguration(Constants.Configurations.MCP_CONFIG).configure(configuration -> configuration.setTransitive(false));
+			extension.createLazyConfiguration(Constants.Configurations.FORGE_RUNTIME_LIBRARY);
 
 			extendsFrom(Constants.Configurations.MINECRAFT_SERVER_DEPENDENCIES, Constants.Configurations.FORGE_DEPENDENCIES, project);
 
@@ -143,24 +133,50 @@ public final class CompileConfiguration {
 			extendsFrom(JavaPlugin.TEST_RUNTIME_CLASSPATH_CONFIGURATION_NAME, Constants.Configurations.FORGE_EXTRA, project);
 		}
 
-		configurations.register(Constants.Configurations.INCLUDE, configuration -> configuration.setTransitive(false)); // Dont get transitive deps
-		configurations.register(Constants.Configurations.MAPPING_CONSTANTS);
-		configurations.register(Constants.Configurations.NAMED_ELEMENTS, configuration -> {
+		if (extension.supportsInclude()) {
+			extension.createLazyConfiguration(Constants.Configurations.INCLUDE, configuration -> configuration.setTransitive(false)); // Dont get transitive deps
+		}
+
+		extension.createLazyConfiguration(Constants.Configurations.MAPPING_CONSTANTS);
+		extension.createLazyConfiguration(Constants.Configurations.NAMED_ELEMENTS, configuration -> {
 			configuration.setCanBeConsumed(true);
 			configuration.setCanBeResolved(false);
-			configuration.extendsFrom(configurations.getByName(JavaPlugin.API_CONFIGURATION_NAME));
+			configuration.extendsFrom(project.getConfigurations().getByName(JavaPlugin.API_CONFIGURATION_NAME));
 		});
 
 		extendsFrom(JavaPlugin.COMPILE_ONLY_CONFIGURATION_NAME, Constants.Configurations.MAPPING_CONSTANTS, project);
 
-		configurations.register(Constants.Configurations.MAPPINGS);
-		configurations.register(Constants.Configurations.MAPPINGS_FINAL);
-		configurations.register(Constants.Configurations.LOOM_DEVELOPMENT_DEPENDENCIES);
-		configurations.register(Constants.Configurations.UNPICK_CLASSPATH);
-		configurations.register(Constants.Configurations.LOCAL_RUNTIME);
+		extension.createLazyConfiguration(Constants.Configurations.MAPPINGS);
+		extension.createLazyConfiguration(Constants.Configurations.MAPPINGS_FINAL);
+		extension.createLazyConfiguration(Constants.Configurations.LOOM_DEVELOPMENT_DEPENDENCIES);
+		extension.createLazyConfiguration(Constants.Configurations.UNPICK_CLASSPATH);
+		extension.createLazyConfiguration(Constants.Configurations.LOCAL_RUNTIME);
 		extendsFrom(JavaPlugin.RUNTIME_CLASSPATH_CONFIGURATION_NAME, Constants.Configurations.LOCAL_RUNTIME, project);
 
-		extension.createRemapConfigurations(SourceSetHelper.getMainSourceSet(project));
+		for (RemappedConfigurationEntry entry : Constants.MOD_COMPILE_ENTRIES) {
+			extension.createLazyConfiguration(entry.sourceConfiguration())
+					.configure(configuration -> configuration.setTransitive(true));
+
+			// Don't get transitive deps of already remapped mods
+			extension.createLazyConfiguration(entry.getRemappedConfiguration())
+					.configure(configuration -> configuration.setTransitive(false));
+
+			if (entry.compileClasspath()) {
+				extendsFrom(Constants.Configurations.MOD_COMPILE_CLASSPATH, entry.sourceConfiguration(), project);
+				extendsFrom(Constants.Configurations.MOD_COMPILE_CLASSPATH_MAPPED, entry.getRemappedConfiguration(), project);
+				extendsFrom(JavaPlugin.COMPILE_CLASSPATH_CONFIGURATION_NAME, entry.getRemappedConfiguration(), project);
+				extendsFrom(JavaPlugin.TEST_COMPILE_CLASSPATH_CONFIGURATION_NAME, entry.getRemappedConfiguration(), project);
+			}
+
+			if (entry.runtimeClasspath()) {
+				extendsFrom(JavaPlugin.RUNTIME_CLASSPATH_CONFIGURATION_NAME, entry.getRemappedConfiguration(), project);
+				extendsFrom(JavaPlugin.TEST_RUNTIME_CLASSPATH_CONFIGURATION_NAME, entry.getRemappedConfiguration(), project);
+			}
+
+			for (String outgoingConfiguration : entry.publishingMode().outgoingConfigurations()) {
+				extendsFrom(outgoingConfiguration, entry.sourceConfiguration(), project);
+			}
+		}
 
 		extendsFrom(Constants.Configurations.LOADER_DEPENDENCIES, Constants.Configurations.MINECRAFT_DEPENDENCIES, project);
 
@@ -176,7 +192,6 @@ public final class CompileConfiguration {
 		project.getDependencies().add(Constants.Configurations.LOOM_DEVELOPMENT_DEPENDENCIES, Constants.Dependencies.DEV_LAUNCH_INJECTOR + Constants.Dependencies.Versions.DEV_LAUNCH_INJECTOR);
 		project.getDependencies().add(Constants.Configurations.LOOM_DEVELOPMENT_DEPENDENCIES, Constants.Dependencies.TERMINAL_CONSOLE_APPENDER + Constants.Dependencies.Versions.TERMINAL_CONSOLE_APPENDER);
 		project.getDependencies().add(JavaPlugin.COMPILE_ONLY_CONFIGURATION_NAME, Constants.Dependencies.JETBRAINS_ANNOTATIONS + Constants.Dependencies.Versions.JETBRAINS_ANNOTATIONS);
-		project.getDependencies().add(JavaPlugin.TEST_COMPILE_ONLY_CONFIGURATION_NAME, Constants.Dependencies.JETBRAINS_ANNOTATIONS + Constants.Dependencies.Versions.JETBRAINS_ANNOTATIONS);
 
 		if (extension.isForge()) {
 			project.getDependencies().add(Constants.Configurations.FORGE_EXTRA, Constants.Dependencies.FORGE_RUNTIME + Constants.Dependencies.Versions.FORGE_RUNTIME);
@@ -185,23 +200,17 @@ public final class CompileConfiguration {
 		}
 	}
 
-	public static void configureCompile(Project project) {
-		LoomGradleExtension extension = LoomGradleExtension.get(project);
+	public static void configureCompile(Project p) {
+		final JavaPluginExtension javaPluginExtension = p.getExtensions().getByType(JavaPluginExtension.class);
+		LoomGradleExtension extension = LoomGradleExtension.get(p);
 
-		project.getTasks().named(JavaPlugin.JAVADOC_TASK_NAME, Javadoc.class).configure(javadoc -> {
-			final SourceSet main = SourceSetHelper.getMainSourceSet(project);
+		p.getTasks().named(JavaPlugin.JAVADOC_TASK_NAME, Javadoc.class).configure(javadoc -> {
+			final SourceSet main = javaPluginExtension.getSourceSets().getByName(SourceSet.MAIN_SOURCE_SET_NAME);
 			javadoc.setClasspath(main.getOutput().plus(main.getCompileClasspath()));
 		});
 
-		GradleUtils.afterSuccessfulEvaluation(project, () -> {
+		p.afterEvaluate(project -> {
 			MinecraftSourceSets.get(project).afterEvaluate(project);
-
-			final boolean previousRefreshDeps = extension.refreshDeps();
-
-			if (getAndLock(project)) {
-				project.getLogger().lifecycle("Found existing cache lock file, rebuilding loom cache. This may have been caused by a failed or canceled build.");
-				extension.setRefreshDeps(true);
-			}
 
 			try {
 				setupMinecraft(project);
@@ -213,8 +222,7 @@ public final class CompileConfiguration {
 			extension.setDependencyManager(dependencyManager);
 			dependencyManager.handleDependencies(project);
 
-			releaseLock(project);
-			extension.setRefreshDeps(previousRefreshDeps);
+			extension.getRemapArchives().finalizeValue();
 
 			MixinExtension mixin = LoomGradleExtension.get(project).getMixin();
 
@@ -241,28 +249,20 @@ public final class CompileConfiguration {
 			}
 		});
 
-		finalizedBy(project, "idea", "genIdeaWorkspace");
-		finalizedBy(project, "eclipse", "genEclipseRuns");
-		finalizedBy(project, "cleanEclipse", "cleanEclipseRuns");
+		finalizedBy(p, "idea", "genIdeaWorkspace");
+		finalizedBy(p, "eclipse", "genEclipseRuns");
+		finalizedBy(p, "cleanEclipse", "cleanEclipseRuns");
 
 		// Add the "dev" jar to the "namedElements" configuration
-		project.artifacts(artifactHandler -> artifactHandler.add(Constants.Configurations.NAMED_ELEMENTS, project.getTasks().named("jar")));
+		p.artifacts(artifactHandler -> artifactHandler.add(Constants.Configurations.NAMED_ELEMENTS, p.getTasks().named("jar")));
 
 		// Ensure that the encoding is set to UTF-8, no matter what the system default is
 		// this fixes some edge cases with special characters not displaying correctly
 		// see http://yodaconditions.net/blog/fix-for-java-file-encoding-problems-with-gradle.html
-		project.getTasks().withType(AbstractCopyTask.class).configureEach(abstractCopyTask -> abstractCopyTask.setFilteringCharset(StandardCharsets.UTF_8.name()));
-		project.getTasks().withType(JavaCompile.class).configureEach(javaCompile -> javaCompile.getOptions().setEncoding(StandardCharsets.UTF_8.name()));
+		p.getTasks().withType(AbstractCopyTask.class).configureEach(abstractCopyTask -> abstractCopyTask.setFilteringCharset(StandardCharsets.UTF_8.name()));
+		p.getTasks().withType(JavaCompile.class).configureEach(javaCompile -> javaCompile.getOptions().setEncoding(StandardCharsets.UTF_8.name()));
 
-		if (extension.isForge()) {
-			// Create default mod from main source set
-			extension.mods(mods -> {
-				final SourceSet main = project.getExtensions().getByType(JavaPluginExtension.class).getSourceSets().getByName(SourceSet.MAIN_SOURCE_SET_NAME);
-				mods.create("main").sourceSet(main);
-			});
-		}
-
-		if (project.getPluginManager().hasPlugin("org.jetbrains.kotlin.kapt")) {
+		if (p.getPluginManager().hasPlugin("org.jetbrains.kotlin.kapt")) {
 			// If loom is applied after kapt, then kapt will use the AP arguments too early for loom to pass the arguments we need for mixin.
 			throw new IllegalArgumentException("fabric-loom must be applied BEFORE kapt in the plugins { } block.");
 		}
@@ -281,27 +281,12 @@ public final class CompileConfiguration {
 		}
 
 		extension.setMinecraftProvider(minecraftProvider);
-		minecraftProvider.provideFirst();
-
-		if (!extension.isForge()) {
-			minecraftProvider.provide();
-		}
+		minecraftProvider.provide();
 
 		final DependencyInfo mappingsDep = DependencyInfo.create(project, Constants.Configurations.MAPPINGS);
 		final MappingsProviderImpl mappingsProvider = MappingsProviderImpl.getInstance(project, extension, mappingsDep, minecraftProvider);
 		extension.setMappingsProvider(mappingsProvider);
-
-		if (extension.isForge()) {
-			ForgeLibrariesProvider.provide(mappingsProvider, project);
-			minecraftProvider.provide();
-		}
-
-		mappingsProvider.setupPost(project);
 		mappingsProvider.applyToProject(project, mappingsDep);
-
-		if (extension.isForge()) {
-			extension.setForgeRunsProvider(ForgeRunsProvider.create(project));
-		}
 
 		if (minecraftProvider instanceof ForgeMinecraftProvider patched) {
 			patched.getPatchedProvider().remapJar();
@@ -413,52 +398,6 @@ public final class CompileConfiguration {
 				.apply(project, extension.getNamedMinecraftProvider()).afterEvaluation();
 	}
 
-	private static Path getLockFile(Project project) {
-		final LoomGradleExtension extension = LoomGradleExtension.get(project);
-		final Path cacheDirectory = extension.getFiles().getUserCache().toPath();
-		final String pathHash = Checksum.toHex(project.getProjectDir().getAbsolutePath().getBytes(StandardCharsets.UTF_8)).substring(0, 16);
-		return cacheDirectory.resolve("." + pathHash + ".lock");
-	}
-
-	private static boolean getAndLock(Project project) {
-		final Path lock = getLockFile(project);
-
-		if (Files.exists(lock)) {
-			return true;
-		}
-
-		try {
-			Files.createFile(lock);
-		} catch (IOException e) {
-			throw new UncheckedIOException("Failed to acquire project configuration lock", e);
-		}
-
-		return false;
-	}
-
-	private static void releaseLock(Project project) {
-		final Path lock = getLockFile(project);
-
-		if (!Files.exists(lock)) {
-			return;
-		}
-
-		try {
-			Files.delete(lock);
-		} catch (IOException e1) {
-			try {
-				// If we failed to delete the lock file, moving it before trying to delete it may help.
-				final Path del = lock.resolveSibling(lock.getFileName() + ".del");
-				Files.move(lock, del);
-				Files.delete(del);
-			} catch (IOException e2) {
-				var exception = new UncheckedIOException("Failed to release project configuration lock", e2);
-				exception.addSuppressed(e1);
-				throw exception;
-			}
-		}
-	}
-
 	public static void extendsFrom(List<String> parents, String b, Project project) {
 		for (String parent : parents) {
 			extendsFrom(parent, b, project);
@@ -488,7 +427,11 @@ public final class CompileConfiguration {
 
 		if (extension.isForge()) {
 			dependencyProviders.addProvider(new McpConfigProvider(project));
-			dependencyProviders.addProvider(new PatchProvider(project));
+
+			if (((ForgeMinecraftProvider) extension.getMinecraftProvider()).requiresPatchProvider()) {
+				dependencyProviders.addProvider(new PatchProvider(project));
+			}
+
 			dependencyProviders.addProvider(new ForgeUniversalProvider(project));
 		}
 

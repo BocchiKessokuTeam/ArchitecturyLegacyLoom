@@ -33,6 +33,7 @@ import java.util.Objects;
 
 import org.gradle.api.Project;
 
+import net.fabricmc.loom.util.HashedDownloadUtil;
 import net.fabricmc.stitch.merge.JarMerger;
 
 public class MergedMinecraftProvider extends MinecraftProvider {
@@ -61,12 +62,12 @@ public class MergedMinecraftProvider extends MinecraftProvider {
 			throw new UnsupportedOperationException("Minecraft versions 1.2.5 and older cannot be merged. Please use `loom { server/clientOnlyMinecraftJar() }`");
 		}
 
-		if (!Files.exists(minecraftMergedJar) || getExtension().refreshDeps()) {
+		if (!Files.exists(minecraftMergedJar) || isRefreshDeps()) {
 			try {
 				mergeJars();
 			} catch (Throwable e) {
-				Files.deleteIfExists(getMinecraftClientJar().toPath());
-				Files.deleteIfExists(getMinecraftServerJar().toPath());
+				HashedDownloadUtil.delete(getMinecraftClientJar());
+				HashedDownloadUtil.delete(getMinecraftServerJar());
 				Files.deleteIfExists(minecraftMergedJar);
 
 				getProject().getLogger().error("Could not merge JARs! Deleting source JARs - please re-run the command and move on.", e);

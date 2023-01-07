@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2019-2022 FabricMC
+ * Copyright (c) 2019-2021 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,6 +26,8 @@ package net.fabricmc.loom.task;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
@@ -40,27 +42,21 @@ import org.gradle.api.IllegalDependencyNotation;
 import org.gradle.api.JavaVersion;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Dependency;
-import org.gradle.api.file.ConfigurableFileCollection;
-import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.plugins.JavaPluginExtension;
-import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.api.tasks.options.Option;
-import org.gradle.work.DisableCachingByDefault;
 
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.api.mappings.layered.spec.LayeredMappingSpecBuilder;
 import net.fabricmc.loom.configuration.providers.mappings.LayeredMappingsDependency;
 import net.fabricmc.loom.configuration.providers.mappings.MappingsProviderImpl;
-import net.fabricmc.loom.util.FileSystemUtil;
 import net.fabricmc.loom.util.SourceRemapper;
 import net.fabricmc.lorenztiny.TinyMappingsJoiner;
 import net.fabricmc.mappingio.MappingReader;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
 
-@DisableCachingByDefault(because = "Always rerun this task.")
-public abstract class MigrateMappingsTask extends AbstractLoomTask {
+public class MigrateMappingsTask extends AbstractLoomTask {
 	private Path inputDir;
 	private Path outputDir;
 	private String mappings;
@@ -68,9 +64,6 @@ public abstract class MigrateMappingsTask extends AbstractLoomTask {
 	public MigrateMappingsTask() {
 		inputDir = getProject().file("src/main/java").toPath();
 		outputDir = getProject().file("remappedSrc").toPath();
-
-		// Ensure we resolve the classpath inputs before running the task.
-		getCompileClasspath().from(getProject().getConfigurations().getByName(JavaPlugin.COMPILE_CLASSPATH_CONFIGURATION_NAME));
 	}
 
 	@Option(option = "input", description = "Java source file directory")
@@ -87,9 +80,6 @@ public abstract class MigrateMappingsTask extends AbstractLoomTask {
 	public void setMappings(String mappings) {
 		this.mappings = mappings;
 	}
-
-	@InputFiles
-	public abstract ConfigurableFileCollection getCompileClasspath();
 
 	@TaskAction
 	public void doTask() throws Throwable {
@@ -127,7 +117,7 @@ public abstract class MigrateMappingsTask extends AbstractLoomTask {
 		Set<File> files;
 
 		try {
-			if (mappings.startsWith("net.minecraft:mappings:")) {
+			if (mappings.startsWith("net.minecraft:mappings:") || mappings.startsWith("net.mojang.minecraft:mappings:")) {
 				if (!mappings.endsWith(":" + LoomGradleExtension.get(project).getMinecraftProvider().minecraftVersion())) {
 					throw new UnsupportedOperationException("Migrating Mojang mappings is currently only supported for the specified minecraft version");
 				}
@@ -159,8 +149,8 @@ public abstract class MigrateMappingsTask extends AbstractLoomTask {
 	private static MemoryMappingTree getMappings(File mappings) throws IOException {
 		MemoryMappingTree mappingTree = new MemoryMappingTree();
 
-		try (FileSystemUtil.Delegate delegate = FileSystemUtil.getJarFileSystem(mappings.toPath())) {
-			MappingReader.read(delegate.fs().getPath("mappings/mappings.tiny"), mappingTree);
+		try (FileSystem fileSystem = FileSystems.newFileSystem(mappings.toPath(), (ClassLoader) null)) {
+			MappingReader.read(fileSystem.getPath("mappings/mappings.tiny"), mappingTree);
 		}
 
 		return mappingTree;

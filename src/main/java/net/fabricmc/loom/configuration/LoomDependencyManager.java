@@ -25,6 +25,8 @@
 package net.fabricmc.loom.configuration;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,8 +41,8 @@ import org.gradle.api.artifacts.repositories.MavenArtifactRepository;
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.LoomGradlePlugin;
 import net.fabricmc.loom.LoomRepositoryPlugin;
+import net.fabricmc.loom.build.ModCompileRemapper;
 import net.fabricmc.loom.configuration.ide.idea.IdeaUtils;
-import net.fabricmc.loom.configuration.mods.ModConfigurationRemapper;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.SourceRemapper;
 import net.fabricmc.loom.util.ZipUtils;
@@ -87,7 +89,7 @@ public class LoomDependencyManager {
 		String platformSuffix = extension.isForge() ? "_forge" : extension.isQuilt() ? "_arch_quilt" : "";
 		String mappingsIdentifier = extension.getMappingsProvider().mappingsIdentifier() + platformSuffix;
 
-		ModConfigurationRemapper.supplyModConfigurations(project, mappingsIdentifier, extension, sourceRemapper);
+		ModCompileRemapper.remapDependencies(project, mappingsIdentifier, extension, sourceRemapper);
 
 		sourceRemapper.remapAll();
 
@@ -109,8 +111,8 @@ public class LoomDependencyManager {
 			}
 
 			return LoomGradlePlugin.GSON.fromJson(new String(bytes, StandardCharsets.UTF_8), JsonObject.class);
-		} catch (Exception e) {
-			throw new RuntimeException("Failed to try and read installer json from " + file, e);
+		} catch (IOException e) {
+			throw new UncheckedIOException("Failed to try and read installer json from", e);
 		}
 	}
 

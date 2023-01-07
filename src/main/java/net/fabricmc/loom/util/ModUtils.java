@@ -27,11 +27,14 @@ package net.fabricmc.loom.util;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
 import com.google.gson.JsonObject;
 import org.gradle.api.logging.Logger;
 import org.jetbrains.annotations.Nullable;
+
+import net.fabricmc.loom.LoomGradlePlugin;
 
 public final class ModUtils {
 	private ModUtils() {
@@ -45,7 +48,7 @@ public final class ModUtils {
 		if (platform == ModPlatform.FORGE) {
 			return ZipUtils.contains(input, "META-INF/mods.toml");
 		} else if (platform == ModPlatform.QUILT) {
-			return ZipUtils.contains(input, "quilt.mod.json") || isMod(input, ModPlatform.FABRIC);
+			return ZipUtils.contains(input, "quilt.mod.json");
 		}
 
 		return ZipUtils.contains(input, "fabric.mod.json");
@@ -53,19 +56,32 @@ public final class ModUtils {
 
 	@Nullable
 	public static JsonObject getFabricModJson(Path path) {
+		final byte[] modJsonBytes;
+
 		try {
-			return ZipUtils.unpackGsonNullable(path, "fabric.mod.json", JsonObject.class);
+			modJsonBytes = ZipUtils.unpackNullable(path, "fabric.mod.json");
 		} catch (IOException e) {
 			throw new UncheckedIOException("Failed to extract fabric.mod.json from " + path, e);
 		}
+
+		if (modJsonBytes == null) {
+			return null;
+		}
+
+		return LoomGradlePlugin.GSON.fromJson(new String(modJsonBytes, StandardCharsets.UTF_8), JsonObject.class);
 	}
 
-	public static boolean shouldRemapMod(Logger logger, Path input, ModPlatform platform, String config) {
-		if (ZipUtils.contains(input, "architectury.common.marker")) return true;
+	public static boolean shouldRemapMod(Logger logger, File input, Object id, ModPlatform platform, String config) {
+		if (ZipUtils.contains(input.toPath(), "architectury.common.marker")) return true;
 		if (isMod(input, platform)) return true;
 
 		if (platform == ModPlatform.FORGE) {
-			logger.lifecycle(":could not find forge mod in " + config + " but forcing: {}", input.getFileName());
+			logger.lifecycle(":could not find forge mod in " + config + " but forcing: {}", id);
+			return true;
+		}
+
+		if (platform == ModPlatform.QUILT && isMod(input, ModPlatform.FABRIC)) {
+			logger.lifecycle(":found fabric mod on quilt {} in {}", id, config);
 			return true;
 		}
 

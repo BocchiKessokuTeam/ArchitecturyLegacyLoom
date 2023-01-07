@@ -46,13 +46,6 @@ trait GradleProjectTestTrait {
         File projectDir = options.projectDir as File ?: options.sharedFiles ? sharedProjectDir : File.createTempDir()
         File gradleHomeDir = options.gradleHomeDir as File ?: options.sharedFiles ? sharedGradleHomeDir : File.createTempDir()
 
-		// Useful for faster local testing.
-		def homeDirOverride = System.getProperty("fabric.loom.test.homeDir")
-
-		if (homeDirOverride) {
-			gradleHomeDir = new File(homeDirOverride)
-		}
-
         setupProject(options, projectDir)
 
         println([
@@ -174,7 +167,6 @@ trait GradleProjectTestTrait {
             args.addAll(options.tasks ?: [])
 
             args << "--stacktrace"
-			args << "--parallel"
             args << "--warning-mode" << warningMode
             args << "--gradle-user-home" << gradleHomeDir
             args.addAll(options.args ?: [])

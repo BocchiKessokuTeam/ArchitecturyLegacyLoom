@@ -37,18 +37,15 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import com.google.common.base.Preconditions;
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import dev.architectury.loom.metadata.ArchitecturyCommonJson;
-import dev.architectury.loom.metadata.QuiltModJson;
 import dev.architectury.tinyremapper.TinyRemapper;
 import org.gradle.api.Project;
 import org.gradle.api.tasks.SourceSet;
@@ -60,8 +57,8 @@ import org.objectweb.asm.commons.Remapper;
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.LoomGradlePlugin;
 import net.fabricmc.loom.api.InterfaceInjectionExtensionAPI;
-import net.fabricmc.loom.api.RemapConfigurationSettings;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
+import net.fabricmc.loom.configuration.RemappedConfigurationEntry;
 import net.fabricmc.loom.configuration.processors.JarProcessor;
 import net.fabricmc.loom.task.GenerateSourcesTask;
 import net.fabricmc.loom.util.Checksum;
@@ -137,6 +134,8 @@ public class InterfaceInjectionProcessor implements JarProcessor, GenerateSource
 			}
 		}
 
+		project.getLogger().lifecycle("Processing file: " + jarFile.getName());
+
 		try {
 			ZipUtils.transform(jarFile.toPath(), getTransformers());
 		} catch (IOException e) {
@@ -181,22 +180,25 @@ public class InterfaceInjectionProcessor implements JarProcessor, GenerateSource
 		return result;
 	}
 
-	// Find the injected interfaces from mods that are both on the compile and runtime classpath.
-	// Runtime is also required to ensure that the interface and it's impl is present when running the mc jar.
 	private List<InjectedInterface> getDependencyInjectedInterfaces() {
-		final Function<RemapConfigurationSettings, Stream<Path>> resolve = settings ->
-				settings.getSourceConfiguration().get().resolve().stream()
-						.map(File::toPath);
+		List<InjectedInterface> result = new ArrayList<>();
 
-		final List<Path> runtimeEntries = extension.getRuntimeRemapConfigurations().stream()
-				.flatMap(resolve)
-				.toList();
+		for (RemappedConfigurationEntry entry : Constants.MOD_COMPILE_ENTRIES) {
+			// Only apply injected interfaces from mods that are part of the compile classpath
+			if (!entry.compileClasspath()) {
+				continue;
+			}
 
-		return extension.getCompileRemapConfigurations().stream()
-				.flatMap(resolve)
-				.filter(runtimeEntries::contains) // Use the intersection of the two configurations.
-				.flatMap(path -> InjectedInterface.fromModJar(path).stream())
-				.toList();
+			Set<File> artifacts = extension.getLazyConfigurationProvider(entry.sourceConfiguration())
+					.get()
+					.resolve();
+
+			for (File artifact : artifacts) {
+				result.addAll(InjectedInterface.fromModJar(artifact.toPath()));
+			}
+		}
+
+		return result;
 	}
 
 	private List<InjectedInterface> getSourceInjectedInterface(SourceSet sourceSet) {
@@ -214,11 +216,16 @@ public class InterfaceInjectionProcessor implements JarProcessor, GenerateSource
 						.matching(patternFilterable -> patternFilterable.include("architectury.common.json"))
 						.getSingleFile();
 
+				final String jsonString;
+
 				try {
-					return ArchitecturyCommonJson.of(archCommonJson).getInjectedInterfaces(archCommonJson.getAbsolutePath());
+					jsonString = Files.readString(archCommonJson.toPath(), StandardCharsets.UTF_8);
 				} catch (IOException e2) {
 					throw new UncheckedIOException("Failed to read architectury.common.json", e2);
 				}
+
+				JsonObject jsonObject = new Gson().fromJson(jsonString, JsonObject.class);
+				return InjectedInterface.fromJsonArch(jsonObject, archCommonJson.getAbsolutePath());
 			} catch (IllegalStateException e2) {
 				File quiltModJson;
 
@@ -227,10 +234,19 @@ public class InterfaceInjectionProcessor implements JarProcessor, GenerateSource
 							.matching(patternFilterable -> patternFilterable.include("quilt.mod.json"))
 							.getSingleFile();
 
+					final String jsonString;
+
 					try {
-						return QuiltModJson.of(quiltModJson).getInjectedInterfaces(quiltModJson.getAbsolutePath());
+						jsonString = Files.readString(quiltModJson.toPath(), StandardCharsets.UTF_8);
 					} catch (IOException e3) {
 						throw new UncheckedIOException("Failed to read quilt.mod.json", e3);
+					}
+
+					JsonObject jsonObject = new Gson().fromJson(jsonString, JsonObject.class);
+
+					if (jsonObject.has("quilt_loom")) {
+						// quilt injected interfaces has the same format as architectury.common.json
+						return InjectedInterface.fromJsonArch(jsonObject.getAsJsonObject("quilt_loom"), quiltModJson.getAbsolutePath());
 					}
 				} catch (IllegalStateException e3) {
 					// File not found
@@ -297,7 +313,7 @@ public class InterfaceInjectionProcessor implements JarProcessor, GenerateSource
 		return comment;
 	}
 
-	public record InjectedInterface(String modId, String className, String ifaceName) {
+	private record InjectedInterface(String modId, String className, String ifaceName) {
 		/**
 		 * Reads the injected interfaces contained in a mod jar, or returns empty if there is none.
 		 */
@@ -314,7 +330,8 @@ public class InterfaceInjectionProcessor implements JarProcessor, GenerateSource
 				}
 
 				if (commonJsonBytes != null) {
-					return ArchitecturyCommonJson.of(commonJsonBytes).getInjectedInterfaces(modJarPath.toString());
+					JsonObject commonJsonObject = new Gson().fromJson(new String(commonJsonBytes, StandardCharsets.UTF_8), JsonObject.class);
+					return fromJsonArch(commonJsonObject, modJarPath.toString());
 				} else {
 					try {
 						commonJsonBytes = ZipUtils.unpackNullable(modJarPath, "quilt.mod.json");
@@ -323,7 +340,12 @@ public class InterfaceInjectionProcessor implements JarProcessor, GenerateSource
 					}
 
 					if (commonJsonBytes != null) {
-						return QuiltModJson.of(commonJsonBytes).getInjectedInterfaces(modJarPath.toString());
+						JsonObject commonJsonObject = new Gson().fromJson(new String(commonJsonBytes, StandardCharsets.UTF_8), JsonObject.class);
+
+						if (commonJsonObject.has("quilt_loom")) {
+							// quilt injected interfaces has the same format as architectury.common.json
+							return fromJsonArch(commonJsonObject.getAsJsonObject("quilt_loom"), modJarPath.toString());
+						}
 					}
 				}
 
@@ -363,6 +385,26 @@ public class InterfaceInjectionProcessor implements JarProcessor, GenerateSource
 			}
 
 			return result;
+		}
+
+		public static List<InjectedInterface> fromJsonArch(JsonObject jsonObject, String modId) {
+			if (jsonObject.has("injected_interfaces")) {
+				JsonObject addedIfaces = jsonObject.getAsJsonObject("injected_interfaces");
+
+				final List<InjectedInterface> result = new ArrayList<>();
+
+				for (String className : addedIfaces.keySet()) {
+					final JsonArray ifaceNames = addedIfaces.getAsJsonArray(className);
+
+					for (JsonElement ifaceName : ifaceNames) {
+						result.add(new InjectedInterface(modId, className, ifaceName.getAsString()));
+					}
+				}
+
+				return result;
+			}
+
+			return Collections.emptyList();
 		}
 	}
 

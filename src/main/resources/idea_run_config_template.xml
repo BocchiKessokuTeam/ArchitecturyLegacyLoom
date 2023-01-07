@@ -1,5 +1,6 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="%NAME%" type="Application" factoryName="Application">
+    %ENVS%
     <option name="MAIN_CLASS_NAME" value="%MAIN_CLASS%" />
     <module name="%IDEA_MODULE%" />
     <option name="PROGRAM_PARAMETERS" value="%PROGRAM_ARGS%" />
@@ -8,9 +9,5 @@
     <method v="2">
       <option name="Make" enabled="true" />
     </method>
-    <envs>
-      %IDEA_ENV_VARS%
-    </envs>
-    <shortenClasspath name="ARGS_FILE" />
   </configuration>
 </component>

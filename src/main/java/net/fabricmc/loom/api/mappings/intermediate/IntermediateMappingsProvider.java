@@ -26,13 +26,10 @@ package net.fabricmc.loom.api.mappings.intermediate;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.function.Function;
 
 import org.gradle.api.Named;
 import org.gradle.api.provider.Property;
 import org.jetbrains.annotations.ApiStatus;
-
-import net.fabricmc.loom.util.download.DownloadBuilder;
 
 /**
  * A simple API to allow 3rd party plugins.
@@ -41,8 +38,6 @@ import net.fabricmc.loom.util.download.DownloadBuilder;
 @ApiStatus.Experimental
 public abstract class IntermediateMappingsProvider implements Named {
 	public abstract Property<String> getMinecraftVersion();
-
-	public abstract Property<Function<String, DownloadBuilder>> getDownloader();
 
 	/**
 	 * Generate or download a tinyv2 mapping file with intermediary and named namespaces.

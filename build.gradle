@@ -8,9 +8,8 @@ plugins {
 	id 'checkstyle'
 	id 'jacoco'
 	id 'codenarc'
-	id "org.jetbrains.kotlin.jvm" version "1.6.10" // Must match the version included with gradle.
-	id "com.diffplug.spotless" version "6.8.0"
-	id "org.gradle.test-retry" version "1.4.1"
+	id "org.jetbrains.kotlin.jvm" version "1.5.31" // Must match the version included with gradle.
+	id "com.diffplug.spotless" version "6.3.0"
 }
 
 java {
@@ -25,26 +24,26 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).all {
 	kotlinOptions {
-		jvmTarget = "17"
+		jvmTarget = "16" // Change to 17 when updating gradle/kotlin to 1.6.10
 	}
 }
 
-group = "dev.architectury"
+group = "dev.architectury.legacy"
 archivesBaseName = project.name
-def baseVersion = '1.0'
+def baseVersion = '0.12.0'
+def runNumber = System.getenv("GITHUB_RUN_NUMBER") ?: "010"
 
-def ENV = System.getenv()
-def runNumber = ENV.GITHUB_RUN_NUMBER ?: "9999"
+def isSnapshot = System.getenv("PR_NUM") != null
 
-def isSnapshot = ENV.PR_NUM != null
+def buildNum = "release #$runNumber"
 
 if (!isSnapshot) {
 	version = baseVersion + "." + runNumber
 } else {
-	version = baseVersion + "-PR." + ENV.PR_NUM + "." + runNumber
+	version = baseVersion + "-PR." + System.getenv("PR_NUM") + "." + runNumber
 }
 
-logger.lifecycle(":building plugin v${version}")
+logger.lifecycle(":building Legacy Loom plugin v${version}")
 
 repositories {
 	mavenCentral()
@@ -56,6 +55,7 @@ repositories {
 			excludeGroupByRegex "org\\.eclipse\\.?.*"
 		}
 	}
+	mavenLocal()
 }
 
 configurations {
@@ -82,7 +82,7 @@ dependencies {
 	// libraries
 	implementation ('commons-io:commons-io:2.11.0')
 	implementation ('com.google.code.gson:gson:2.9.0')
-	implementation ('com.fasterxml.jackson.core:jackson-databind:2.13.3')
+	implementation ('com.fasterxml.jackson.core:jackson-databind:2.13.2.2')
 	implementation ('com.google.guava:guava:31.1-jre')
 	implementation ('org.ow2.asm:asm:9.3')
 	implementation ('org.ow2.asm:asm-analysis:9.3')
@@ -92,13 +92,13 @@ dependencies {
 	implementation ('me.tongfei:progressbar:0.9.0')
 
 	// game handling utils
-	implementation ('net.fabricmc:stitch:0.6.2') {
+	implementation ('net.fabricmc:stitch:0.6.1') {
 		exclude module: 'mercury'
 		exclude module: 'enigma'
 	}
 
 	// tinyfile management
-	implementation ('dev.architectury:tiny-remapper:1.8.20')
+	implementation ('dev.architectury:tiny-remapper:1.7.19')
 	implementation 'net.fabricmc:access-widener:2.1.0'
 	implementation 'net.fabricmc:mapping-io:0.2.1'
 
@@ -120,15 +120,15 @@ dependencies {
 	}
 
 	// Kapt integration
-	compileOnly('org.jetbrains.kotlin:kotlin-gradle-plugin:1.6.10') // Must match the version included with gradle.
+	compileOnly('org.jetbrains.kotlin:kotlin-gradle-plugin:1.5.31') // Must match the version included with gradle.
 
 	// Forge patches
 	implementation ('net.minecraftforge:installertools:1.2.0')
+	implementation ('net.minecraftforge:srgutils:0.4.11')
 	implementation ('org.cadixdev:lorenz:0.5.3')
 	implementation ('org.cadixdev:lorenz-asm:0.5.3')
 	implementation ('de.oceanlabs.mcp:mcinjector:3.8.0')
 	implementation ('com.opencsv:opencsv:5.4')
-	implementation ('net.minecraftforge:DiffPatch:2.0.7')
 
 	// Testing
 	testImplementation(gradleTestKit())
@@ -136,18 +136,14 @@ dependencies {
 		exclude module: 'groovy-all'
 	}
 	testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.8.2'
-	testImplementation ('io.javalin:javalin:4.6.1') {
+	testImplementation ('io.javalin:javalin:4.4.0') {
 		exclude group: 'org.jetbrains.kotlin'
 	}
 	testImplementation 'net.fabricmc:fabric-installer:0.9.0'
-	testImplementation 'org.mockito:mockito-core:4.6.1'
+	testImplementation 'org.mockito:mockito-core:4.4.0'
 
 	compileOnly 'org.jetbrains:annotations:23.0.0'
 	testCompileOnly 'org.jetbrains:annotations:23.0.0'
-
-	testCompileOnly ('net.fabricmc:sponge-mixin:0.11.4+mixin.0.8.5') {
-		transitive = false
-	}
 }
 
 jar {
@@ -166,7 +162,6 @@ spotless {
 	java {
 		licenseHeaderFile(rootProject.file("HEADER")).yearSeparator("-")
 		targetExclude("**/loom/util/DownloadUtil.java", "**/loom/util/FileSystemUtil.java")
-		targetExclude("**/dev/architectury/**")
 	}
 
 	groovy {
@@ -183,18 +178,18 @@ spotless {
 
 checkstyle {
 	configFile = file('checkstyle.xml')
-	toolVersion = '10.3.1'
+	toolVersion = '9.3'
 }
 
 codenarc {
-	toolVersion = "3.1.0"
+	toolVersion = "2.2.0"
 	configFile = file("codenarc.groovy")
 }
 
 gradlePlugin {
 	plugins {
 		fabricLoom {
-			id = 'dev.architectury.loom'
+			id = 'dev.architectury.legacy.loom'
 			implementationClass = 'net.fabricmc.loom.bootstrap.LoomGradlePluginBootstrap'
 		}
 	}
@@ -215,20 +210,9 @@ jacocoTestReport {
 }
 
 test {
-	maxHeapSize = "2560m"
+	maxHeapSize = "1536m"
 	useJUnitPlatform()
-
-	// Forward system prop onto tests.
-	if (System.getProperty("fabric.loom.test.homeDir")) {
-		systemProperty "fabric.loom.test.homeDir", System.getProperty("fabric.loom.test.homeDir")
-	}
-
-
-	if (ENV.CI) {
-		retry {
-			maxRetries = 3
-		}
-	}
+	maxParallelForks = Runtime.runtime.availableProcessors() ?: 1
 }
 
 import org.gradle.util.GradleVersion
@@ -257,8 +241,8 @@ publishing {
 		}
 
 		pluginSnapshot(MavenPublication) {
-			groupId 'dev.architectury.loom'
-			artifactId 'dev.architectury.loom.gradle.plugin'
+			groupId 'dev.architectury.legacy.loom'
+			artifactId 'dev.architectury.legacy.loom.gradle.plugin'
 			version baseVersion + '-SNAPSHOT'
 
 			pom.withXml {
@@ -278,12 +262,12 @@ publishing {
 	}
 
 	repositories {
-		if (ENV.MAVEN_PASS != null) {
+		if (System.getenv("MAVEN_PASS") != null) {
 			maven {
 				url = "https://deploy.shedaniel.me/"
 				credentials {
 					username = "shedaniel"
-					password = ENV.MAVEN_PASS
+					password = System.getenv("MAVEN_PASS")
 				}
 			}
 		}
@@ -329,11 +313,8 @@ task writeActionsTestMatrix() {
 			}
 		}
 
-		// Run all the unit tests together
+		// Run all the unit tests togeather
 		testMatrix.add("net.fabricmc.loom.test.unit.*")
-
-		// Kotlin tests
-		testMatrix.add("net.fabricmc.loom.test.kotlin.*")
 
 		def json = groovy.json.JsonOutput.toJson(testMatrix)
 		def output = file("build/test_matrix.json")
@@ -369,22 +350,4 @@ task downloadGradleSources() {
 
 tasks.withType(GenerateModuleMetadata) {
 	enabled = false
-}
-
-task printActionsTestName(type: PrintActionsTestName) {
-}
-
-/**
- * Replaces invalid characters in test names for GitHub Actions artifacts.
- */
-class PrintActionsTestName extends DefaultTask {
-	@Input
-	@Option(option = "name", description = "The test name")
-	String testName
-
-	@TaskAction
-	def run() {
-		def sanitised = testName.replace('*', '_')
-		println "::set-output name=test::$sanitised"
-	}
 }

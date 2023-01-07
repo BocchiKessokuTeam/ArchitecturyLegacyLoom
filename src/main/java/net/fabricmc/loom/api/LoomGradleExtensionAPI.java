@@ -24,13 +24,11 @@
 
 package net.fabricmc.loom.api;
 
-import java.io.File;
 import java.util.List;
 import java.util.function.Consumer;
 
 import org.gradle.api.Action;
 import org.gradle.api.NamedDomainObjectContainer;
-import org.gradle.api.NamedDomainObjectList;
 import org.gradle.api.artifacts.Dependency;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.RegularFileProperty;
@@ -38,7 +36,6 @@ import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.publish.maven.MavenPublication;
-import org.gradle.api.tasks.SourceSet;
 import org.jetbrains.annotations.ApiStatus;
 
 import net.fabricmc.loom.api.decompilers.DecompilerOptions;
@@ -46,10 +43,10 @@ import net.fabricmc.loom.api.mappings.intermediate.IntermediateMappingsProvider;
 import net.fabricmc.loom.api.mappings.layered.spec.LayeredMappingSpecBuilder;
 import net.fabricmc.loom.configuration.ide.RunConfig;
 import net.fabricmc.loom.configuration.ide.RunConfigSettings;
+import net.fabricmc.loom.configuration.launch.LaunchProviderSettings;
 import net.fabricmc.loom.configuration.processors.JarProcessor;
 import net.fabricmc.loom.configuration.providers.mappings.NoOpIntermediateMappingsProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftJarConfiguration;
-import net.fabricmc.loom.task.GenerateSourcesTask;
 import net.fabricmc.loom.util.DeprecationHelper;
 import net.fabricmc.loom.util.ModPlatform;
 
@@ -61,6 +58,12 @@ public interface LoomGradleExtensionAPI {
 	DeprecationHelper getDeprecationHelper();
 
 	RegularFileProperty getAccessWidenerPath();
+
+	Property<Boolean> getShareRemapCaches();
+
+	default void shareCaches() {
+		getShareRemapCaches().set(true);
+	}
 
 	NamedDomainObjectContainer<DecompilerOptions> getDecompilerOptions();
 
@@ -78,6 +81,8 @@ public interface LoomGradleExtensionAPI {
 
 	Dependency layered(Action<LayeredMappingSpecBuilder> action);
 
+	Property<Boolean> getRemapArchives();
+
 	void runs(Action<NamedDomainObjectContainer<RunConfigSettings>> action);
 
 	NamedDomainObjectContainer<RunConfigSettings> getRunConfigs();
@@ -88,23 +93,11 @@ public interface LoomGradleExtensionAPI {
 	 * Optionally register and configure a {@link ModSettings} object. The name should match the modid.
 	 * This is generally only required when the mod spans across multiple classpath directories, such as when using split sourcesets.
 	 */
+	@ApiStatus.Experimental
 	void mods(Action<NamedDomainObjectContainer<ModSettings>> action);
 
+	@ApiStatus.Experimental
 	NamedDomainObjectContainer<ModSettings> getMods();
-
-	NamedDomainObjectList<RemapConfigurationSettings> getRemapConfigurations();
-
-	RemapConfigurationSettings addRemapConfiguration(String name, Action<RemapConfigurationSettings> action);
-
-	void createRemapConfigurations(SourceSet sourceSet);
-
-	default List<RemapConfigurationSettings> getCompileRemapConfigurations() {
-		return getRemapConfigurations().stream().filter(element -> element.getOnCompileClasspath().get()).toList();
-	}
-
-	default List<RemapConfigurationSettings> getRuntimeRemapConfigurations() {
-		return getRemapConfigurations().stream().filter(element -> element.getOnCompileClasspath().get()).toList();
-	}
 
 	@ApiStatus.Experimental
 	// TODO: move this from LoomGradleExtensionAPI to LoomGradleExtension once getRefmapName & setRefmapName is removed.
@@ -117,6 +110,16 @@ public interface LoomGradleExtensionAPI {
 	InterfaceInjectionExtensionAPI getInterfaceInjection();
 
 	Property<String> getCustomMinecraftManifest();
+
+	/**
+	 * If true, Loom will replace the {@code -dev} jars in the {@code *Elements} configurations
+	 * with remapped outgoing variants.
+	 *
+	 * <p>Will only apply if {@link #getRemapArchives()} is also true.
+	 *
+	 * @return the property controlling the setup of remapped variants
+	 */
+	Property<Boolean> getSetupRemappedVariants();
 
 	/**
 	 * Disables the deprecated POM generation for a publication.
@@ -169,44 +172,37 @@ public interface LoomGradleExtensionAPI {
 	}
 
 	/**
-	 * Returns the tiny mappings file used to remap the game and mods.
-	 */
-	File getMappingsFile();
-
-	/**
-	 * Returns the {@link GenerateSourcesTask} for the given {@link DecompilerOptions}.
-	 * When env source sets are split and the client param is true the decompile task for the client jar will be returned.
-	 */
-	GenerateSourcesTask getDecompileTask(DecompilerOptions options, boolean client);
-
-	/**
 	 * Use "%1$s" as a placeholder for the minecraft version.
 	 *
 	 * @return the intermediary url template
 	 */
 	Property<String> getIntermediaryUrl();
 
+	@ApiStatus.Experimental
 	Property<MinecraftJarConfiguration> getMinecraftJarConfiguration();
 
+	@ApiStatus.Experimental
 	default void serverOnlyMinecraftJar() {
 		getMinecraftJarConfiguration().set(MinecraftJarConfiguration.SERVER_ONLY);
 	}
 
+	@ApiStatus.Experimental
 	default void clientOnlyMinecraftJar() {
 		getMinecraftJarConfiguration().set(MinecraftJarConfiguration.CLIENT_ONLY);
 	}
 
+	@ApiStatus.Experimental
 	default void splitMinecraftJar() {
 		getMinecraftJarConfiguration().set(MinecraftJarConfiguration.SPLIT);
 	}
 
+	@ApiStatus.Experimental
 	void splitEnvironmentSourceSets();
 
+	@ApiStatus.Experimental
 	boolean areEnvironmentSourceSetsSplit();
 
 	Property<Boolean> getRuntimeOnlyLog4j();
-
-	Property<Boolean> getSplitModDependencies();
 
 	// ===================
 	//  Architectury Loom
@@ -228,6 +224,10 @@ public interface LoomGradleExtensionAPI {
 	void setGenerateSrgTiny(Boolean generateSrgTiny);
 
 	boolean shouldGenerateSrgTiny();
+
+	void launches(Action<NamedDomainObjectContainer<LaunchProviderSettings>> action);
+
+	NamedDomainObjectContainer<LaunchProviderSettings> getLaunchConfigs();
 
 	default void addTaskBeforeRun(String task) {
 		this.getTasksBeforeRun().add(task);

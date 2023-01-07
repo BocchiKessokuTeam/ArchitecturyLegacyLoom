@@ -26,16 +26,11 @@ package net.fabricmc.loom.build.nesting;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.Serializable;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.function.Supplier;
 
 import com.google.common.collect.Sets;
 import com.google.common.hash.Hashing;
@@ -52,7 +47,6 @@ import org.gradle.api.artifacts.ResolvedDependency;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.provider.Provider;
-import org.gradle.api.tasks.TaskDependency;
 import org.gradle.api.tasks.bundling.AbstractArchiveTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -60,7 +54,6 @@ import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.LoomGradlePlugin;
 import net.fabricmc.loom.task.RemapTaskConfiguration;
 import net.fabricmc.loom.util.ModUtils;
-import net.fabricmc.loom.util.Pair;
 import net.fabricmc.loom.util.ZipUtils;
 
 public final class IncludedJarFactory {
@@ -74,34 +67,16 @@ public final class IncludedJarFactory {
 		return project.provider(() -> {
 			final ConfigurableFileCollection files = project.files();
 			final Set<String> visited = Sets.newHashSet();
-			final Set<Task> builtBy = Sets.newHashSet();
 
-			files.from(getProjectDeps(configuration, visited, builtBy).stream().map(LazyNestedFile::file).toArray());
-			files.from(getFileDeps(configuration, visited, builtBy).stream().map(LazyNestedFile::file).toArray());
+			files.from(getProjectDeps(configuration, visited));
+			files.from(getFileDeps(configuration, visited));
 			files.builtBy(configuration.getBuildDependencies());
 			return files;
 		});
 	}
 
-	public Provider<Pair<List<LazyNestedFile>, TaskDependency>> getForgeNestedJars(final Configuration configuration) {
-		return project.provider(() -> {
-			final List<LazyNestedFile> files = new ArrayList<>();
-			final Set<String> visited = Sets.newHashSet();
-			final Set<Task> builtBy = Sets.newHashSet();
-
-			files.addAll(getProjectDeps(configuration, visited, builtBy));
-			files.addAll(getFileDeps(configuration, visited, builtBy));
-			return new Pair<>(files, task -> {
-				TaskDependency dependencies = configuration.getBuildDependencies();
-				Set<Task> tasks = new HashSet<>(dependencies.getDependencies(task));
-				tasks.addAll(builtBy);
-				return tasks;
-			});
-		});
-	}
-
-	private List<LazyNestedFile> getFileDeps(Configuration configuration, Set<String> visited, Set<Task> builtBy) {
-		final List<LazyNestedFile> files = new ArrayList<>();
+	private ConfigurableFileCollection getFileDeps(Configuration configuration, Set<String> visited) {
+		final ConfigurableFileCollection files = project.files();
 
 		final ResolvedConfiguration resolvedConfiguration = configuration.getResolvedConfiguration();
 		final Set<ResolvedDependency> dependencies = resolvedConfiguration.getFirstLevelModuleDependencies();
@@ -119,15 +94,15 @@ public final class IncludedJarFactory {
 						artifact.getClassifier()
 				);
 
-				files.add(new LazyNestedFile(project, metadata, () -> getNestableJar(artifact.getFile(), metadata)));
+				files.from(project.provider(() -> getNestableJar(artifact.getFile(), metadata)));
 			}
 		}
 
 		return files;
 	}
 
-	private List<LazyNestedFile> getProjectDeps(Configuration configuration, Set<String> visited, Set<Task> builtBy) {
-		final List<LazyNestedFile> files = new ArrayList<>();
+	private ConfigurableFileCollection getProjectDeps(Configuration configuration, Set<String> visited) {
+		final ConfigurableFileCollection files = project.files();
 
 		for (Dependency dependency : configuration.getDependencies()) {
 			if (dependency instanceof ProjectDependency projectDependency) {
@@ -155,8 +130,8 @@ public final class IncludedJarFactory {
 						);
 
 						Provider<File> provider = archiveTask.getArchiveFile().map(regularFile -> getNestableJar(regularFile.getAsFile(), metadata));
-						files.add(new LazyNestedFile(metadata, provider));
-						builtBy.add(task);
+						files.from(provider);
+						files.builtBy(task);
 					} else {
 						throw new UnsupportedOperationException("Cannot nest none AbstractArchiveTask task: " + task.getName());
 					}
@@ -226,7 +201,7 @@ public final class IncludedJarFactory {
 		return LoomGradlePlugin.GSON.toJson(jsonObject);
 	}
 
-	public record Metadata(String group, String name, String version, @Nullable String classifier) implements Serializable {
+	private record Metadata(String group, String name, String version, @Nullable String classifier) {
 		@Override
 		public String classifier() {
 			if (classifier == null) {
@@ -234,18 +209,6 @@ public final class IncludedJarFactory {
 			} else {
 				return "_" + classifier;
 			}
-		}
-	}
-
-	public record NestedFile(Metadata metadata, File file) implements Serializable { }
-
-	public record LazyNestedFile(Metadata metadata, Provider<File> file) implements Serializable {
-		public LazyNestedFile(Project project, Metadata metadata, Supplier<File> file) {
-			this(metadata, project.provider(file::get));
-		}
-
-		public NestedFile resolve() {
-			return new NestedFile(metadata, file.get());
 		}
 	}
 }

@@ -31,9 +31,9 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.jar.Manifest;
 
@@ -44,17 +44,19 @@ import dev.architectury.tinyremapper.NonClassCopyMode;
 import dev.architectury.tinyremapper.OutputConsumerPath;
 import dev.architectury.tinyremapper.TinyRemapper;
 import org.gradle.api.Project;
-import org.gradle.api.artifacts.Configuration;
+import org.objectweb.asm.commons.Remapper;
 
+import net.fabricmc.accesswidener.AccessWidenerReader;
+import net.fabricmc.accesswidener.AccessWidenerRemapper;
+import net.fabricmc.accesswidener.AccessWidenerWriter;
 import net.fabricmc.loom.LoomGradleExtension;
-import net.fabricmc.loom.api.RemapConfigurationSettings;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
-import net.fabricmc.loom.configuration.mods.dependency.ModDependency;
+import net.fabricmc.loom.configuration.RemappedConfigurationEntry;
+import net.fabricmc.loom.configuration.processors.dependency.ModDependencyInfo;
 import net.fabricmc.loom.configuration.providers.mappings.MappingsProviderImpl;
 import net.fabricmc.loom.task.RemapJarTask;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.LoggerFilter;
-import net.fabricmc.loom.util.Pair;
 import net.fabricmc.loom.util.TinyRemapperHelper;
 import net.fabricmc.loom.util.ZipUtils;
 import net.fabricmc.loom.util.kotlin.KotlinClasspathService;
@@ -68,28 +70,54 @@ public class ModProcessor {
 	private static final String toM = MappingsNamespace.NAMED.toString();
 
 	private final Project project;
-	private final Configuration sourceConfiguration;
 
-	public ModProcessor(Project project, Configuration sourceConfiguration) {
+	public ModProcessor(Project project) {
 		this.project = project;
-		this.sourceConfiguration = sourceConfiguration;
 	}
 
-	public void processMods(List<ModDependency> remapList) throws IOException {
+	public void processMods(List<ModDependencyInfo> processList) throws IOException {
+		ArrayList<ModDependencyInfo> remapList = new ArrayList<>();
+
+		for (ModDependencyInfo info : processList) {
+			if (info.requiresRemapping()) {
+				project.getLogger().debug("{} requires remapping", info.getInputFile());
+				Files.deleteIfExists(info.getRemappedOutput().toPath());
+
+				remapList.add(info);
+			}
+		}
+
+		if (remapList.isEmpty()) {
+			project.getLogger().debug("No mods to remap, skipping");
+			return;
+		}
+
 		try {
-			project.getLogger().lifecycle(":remapping {} mods from {}", remapList.size(), sourceConfiguration.getName());
 			remapJars(remapList);
 		} catch (Exception e) {
-			throw new RuntimeException(String.format(Locale.ENGLISH, "Failed to remap %d mods", remapList.size()), e);
+			project.getLogger().error("Failed to remap %d mods".formatted(remapList.size()), e);
+
+			for (ModDependencyInfo info : remapList) {
+				Files.deleteIfExists(info.getRemappedOutput().toPath());
+			}
+
+			throw e;
+		}
+
+		// Check all the mods we expect exist
+		for (ModDependencyInfo info : processList) {
+			if (!info.getRemappedOutput().exists()) {
+				throw new RuntimeException("Failed to find remapped mod: " + info);
+			}
 		}
 	}
 
-	private void stripNestedJars(Path path) {
-		if (!ZipUtils.contains(path, "fabric.mod.json")) {
-			if (ZipUtils.contains(path, "quilt.mod.json")) {
+	private void stripNestedJars(File file) {
+		if (!ZipUtils.contains(file.toPath(), "fabric.mod.json")) {
+			if (ZipUtils.contains(file.toPath(), "quilt.mod.json")) {
 				// Strip out all contained jar info as we dont want loader to try and load the jars contained in dev.
 				try {
-					ZipUtils.transformJson(JsonObject.class, path, Map.of("quilt.mod.json", json -> {
+					ZipUtils.transformJson(JsonObject.class, file.toPath(), Map.of("quilt.mod.json", json -> {
 						if (json.has("quilt_loader")) {
 							json.getAsJsonObject("quilt_loader").remove("jars");
 						}
@@ -97,7 +125,7 @@ public class ModProcessor {
 						return json;
 					}));
 				} catch (IOException e) {
-					throw new UncheckedIOException("Failed to strip nested jars from %s".formatted(path), e);
+					throw new UncheckedIOException("Failed to strip nested jars from %s".formatted(file), e);
 				}
 			}
 
@@ -106,16 +134,34 @@ public class ModProcessor {
 
 		// Strip out all contained jar info as we dont want loader to try and load the jars contained in dev.
 		try {
-			ZipUtils.transformJson(JsonObject.class, path, Map.of("fabric.mod.json", json -> {
+			ZipUtils.transformJson(JsonObject.class, file.toPath(), Map.of("fabric.mod.json", json -> {
 				json.remove("jars");
 				return json;
 			}));
 		} catch (IOException e) {
-			throw new UncheckedIOException("Failed to strip nested jars from %s".formatted(path), e);
+			throw new UncheckedIOException("Failed to strip nested jars from %s".formatted(file), e);
 		}
 	}
 
-	private void remapJars(List<ModDependency> remapList) throws IOException {
+	/**
+	 * Remap another mod's access widener from intermediary to named, so that loader can apply it in our dev-env.
+	 */
+	private byte[] remapAccessWidener(byte[] input, Remapper remapper) {
+		int version = AccessWidenerReader.readVersion(input);
+
+		AccessWidenerWriter writer = new AccessWidenerWriter(version);
+		AccessWidenerRemapper awRemapper = new AccessWidenerRemapper(
+				writer,
+				remapper,
+				MappingsNamespace.INTERMEDIARY.toString(),
+				MappingsNamespace.NAMED.toString()
+		);
+		AccessWidenerReader reader = new AccessWidenerReader(awRemapper);
+		reader.read(input);
+		return writer.write();
+	}
+
+	private void remapJars(List<ModDependencyInfo> remapList) throws IOException {
 		final LoomGradleExtension extension = LoomGradleExtension.get(project);
 		final MappingsProviderImpl mappingsProvider = extension.getMappingsProvider();
 		String fromM = extension.isForge() ? MappingsNamespace.SRG.toString() : MappingsNamespace.INTERMEDIARY.toString();
@@ -124,6 +170,7 @@ public class ModProcessor {
 				.stream().map(File::toPath).toArray(Path[]::new);
 
 		Stopwatch stopwatch = Stopwatch.createStarted();
+		project.getLogger().lifecycle(":remapping " + remapList.size() + " mods (TinyRemapper, " + fromM + " -> " + toM + ")");
 
 		MemoryMappingTree mappings = (fromM.equals("srg") || toM.equals("srg")) && extension.isForge() ? mappingsProvider.getMappingsWithSrg() : mappingsProvider.getMappings();
 		LoggerFilter.replaceSystemOut();
@@ -149,13 +196,13 @@ public class ModProcessor {
 
 		remapper.readClassPathAsync(mcDeps);
 
-		final Map<ModDependency, InputTag> tagMap = new HashMap<>();
-		final Map<ModDependency, OutputConsumerPath> outputConsumerMap = new HashMap<>();
-		final Map<ModDependency, Pair<byte[], String>> accessWidenerMap = new HashMap<>();
+		final Map<ModDependencyInfo, InputTag> tagMap = new HashMap<>();
+		final Map<ModDependencyInfo, OutputConsumerPath> outputConsumerMap = new HashMap<>();
+		final Map<ModDependencyInfo, byte[]> accessWidenerMap = new HashMap<>();
 
-		for (RemapConfigurationSettings entry : extension.getRemapConfigurations()) {
-			for (File inputFile : entry.getSourceConfiguration().get().getFiles()) {
-				if (remapList.stream().noneMatch(info -> info.getInputFile().toFile().equals(inputFile))) {
+		for (RemappedConfigurationEntry entry : Constants.MOD_COMPILE_ENTRIES) {
+			for (File inputFile : project.getConfigurations().getByName(entry.sourceConfiguration()).getFiles()) {
+				if (remapList.stream().noneMatch(info -> info.getInputFile().equals(inputFile))) {
 					project.getLogger().debug("Adding " + inputFile + " onto the remap classpath");
 
 					remapper.readClassPathAsync(inputFile.toPath());
@@ -163,37 +210,35 @@ public class ModProcessor {
 			}
 		}
 
-		for (ModDependency info : remapList) {
+		for (ModDependencyInfo info : remapList) {
 			InputTag tag = remapper.createInputTag();
 
 			project.getLogger().debug("Adding " + info.getInputFile() + " as a remap input");
 
-			remapper.readInputsAsync(tag, info.getInputFile());
+			remapper.readInputsAsync(tag, info.getInputFile().toPath());
 			tagMap.put(info, tag);
-
-			Files.deleteIfExists(getRemappedOutput(info));
 		}
 
 		try {
 			// Apply this in a second loop as we need to ensure all the inputs are on the classpath before remapping.
-			for (ModDependency dependency : remapList) {
+			for (ModDependencyInfo info : remapList) {
 				try {
-					OutputConsumerPath outputConsumer = new OutputConsumerPath.Builder(getRemappedOutput(dependency)).build();
+					OutputConsumerPath outputConsumer = new OutputConsumerPath.Builder(info.getRemappedOutput().toPath()).build();
 
-					outputConsumer.addNonClassFiles(dependency.getInputFile(), NonClassCopyMode.FIX_META_INF, remapper);
-					outputConsumerMap.put(dependency, outputConsumer);
+					outputConsumer.addNonClassFiles(info.getInputFile().toPath(), NonClassCopyMode.FIX_META_INF, remapper);
+					outputConsumerMap.put(info, outputConsumer);
 
-					final AccessWidenerUtils.AccessWidenerData accessWidenerData = AccessWidenerUtils.readAccessWidenerData(dependency.getInputFile());
+					final ModDependencyInfo.AccessWidenerData accessWidenerData = info.getAccessWidenerData();
 
 					if (accessWidenerData != null) {
-						project.getLogger().debug("Remapping access widener in {}", dependency.getInputFile());
-						byte[] remappedAw = AccessWidenerUtils.remapAccessWidener(accessWidenerData.content(), remapper.getEnvironment().getRemapper());
-						accessWidenerMap.put(dependency, new Pair<>(remappedAw, accessWidenerData.path()));
+						project.getLogger().debug("Remapping access widener in {}", info.getInputFile());
+						byte[] remappedAw = remapAccessWidener(accessWidenerData.content(), remapper.getEnvironment().getRemapper());
+						accessWidenerMap.put(info, remappedAw);
 					}
 
-					remapper.apply(outputConsumer, tagMap.get(dependency));
+					remapper.apply(outputConsumer, tagMap.get(info));
 				} catch (Exception e) {
-					throw new RuntimeException("Failed to remap: " + dependency, e);
+					throw new RuntimeException("Failed to remap: " + info.getRemappedNotation(), e);
 				}
 			}
 		} finally {
@@ -206,30 +251,25 @@ public class ModProcessor {
 
 		project.getLogger().lifecycle(":remapped " + remapList.size() + " mods (TinyRemapper, " + fromM + " -> " + toM + ") in " + stopwatch.stop());
 
-		for (ModDependency dependency : remapList) {
-			outputConsumerMap.get(dependency).close();
-
-			final Path output = getRemappedOutput(dependency);
-			final Pair<byte[], String> accessWidener = accessWidenerMap.get(dependency);
+		for (ModDependencyInfo info : remapList) {
+			outputConsumerMap.get(info).close();
+			byte[] accessWidener = accessWidenerMap.get(info);
 
 			if (accessWidener != null) {
-				ZipUtils.replace(output, accessWidener.right(), accessWidener.left());
+				assert info.getAccessWidenerData() != null;
+				ZipUtils.replace(info.getRemappedOutput().toPath(), info.getAccessWidenerData().path(), accessWidener);
 			}
 
-			stripNestedJars(output);
-			remapJarManifestEntries(output);
+			stripNestedJars(info.getRemappedOutput());
+			remapJarManifestEntries(info.getRemappedOutput().toPath());
 
 			if (extension.isForge()) {
-				AtRemapper.remap(project.getLogger(), output, mappings);
-				CoreModClassRemapper.remapJar(output, mappings, project.getLogger());
+				AtRemapper.remap(project.getLogger(), info.getRemappedOutput().toPath(), mappings);
+				CoreModClassRemapper.remapJar(info.getRemappedOutput().toPath(), mappings, project.getLogger());
 			}
 
-			dependency.copyToCache(project, output, null);
+			info.finaliseRemapping();
 		}
-	}
-
-	private static Path getRemappedOutput(ModDependency dependency) {
-		return dependency.getWorkingFile(null);
 	}
 
 	private void remapJarManifestEntries(Path jar) throws IOException {

@@ -32,7 +32,6 @@ import org.gradle.api.logging.Logger;
 import org.jetbrains.annotations.ApiStatus;
 
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftProvider;
-import net.fabricmc.loom.util.download.DownloadBuilder;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
 
 @ApiStatus.Experimental /* Very Experimental and not cleanly separated from the impl atm */
@@ -55,8 +54,4 @@ public interface MappingContext {
 	Path workingDirectory(String name);
 
 	Logger getLogger();
-
-	DownloadBuilder download(String url);
-
-	boolean refreshDeps();
 }

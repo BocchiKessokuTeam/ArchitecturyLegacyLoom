@@ -43,7 +43,7 @@ public class ForgeUniversalProvider extends DependencyProvider {
 	public void provide(DependencyInfo dependency) throws Exception {
 		forge = new File(getExtension().getForgeProvider().getGlobalCache(), "forge-universal.jar");
 
-		if (!forge.exists() || refreshDeps()) {
+		if (!forge.exists() || isRefreshDeps()) {
 			File dep = dependency.resolveFile().orElseThrow(() -> new RuntimeException("Could not resolve Forge"));
 			FileUtils.copyFile(dep, forge);
 		}

@@ -24,17 +24,21 @@
 
 package net.fabricmc.loom.extension;
 
-import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
 
 import com.google.common.base.Suppliers;
 import org.cadixdev.lorenz.MappingSet;
 import org.cadixdev.mercury.Mercury;
+import org.gradle.api.Action;
+import org.gradle.api.NamedDomainObjectProvider;
 import org.gradle.api.Project;
+import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.FileCollection;
 
@@ -47,7 +51,6 @@ import net.fabricmc.loom.configuration.LoomDependencyManager;
 import net.fabricmc.loom.configuration.accesswidener.AccessWidenerFile;
 import net.fabricmc.loom.configuration.processors.JarProcessorManager;
 import net.fabricmc.loom.configuration.providers.forge.DependencyProviders;
-import net.fabricmc.loom.configuration.providers.forge.ForgeRunsProvider;
 import net.fabricmc.loom.configuration.providers.mappings.IntermediaryMappingsProvider;
 import net.fabricmc.loom.configuration.providers.mappings.MappingsProviderImpl;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftProvider;
@@ -55,8 +58,7 @@ import net.fabricmc.loom.configuration.providers.minecraft.mapped.IntermediaryMi
 import net.fabricmc.loom.configuration.providers.minecraft.mapped.NamedMinecraftProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.mapped.SrgMinecraftProvider;
 import net.fabricmc.loom.util.ModPlatform;
-import net.fabricmc.loom.util.download.Download;
-import net.fabricmc.loom.util.download.DownloadBuilder;
+import net.fabricmc.loom.util.function.LazyBool;
 
 public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implements LoomGradleExtension {
 	private final Project project;
@@ -67,6 +69,7 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 
 	private final MappingSet[] srcMappingCache = new MappingSet[2];
 	private final Mercury[] srcMercuryCache = new Mercury[2];
+	private final Map<String, NamedDomainObjectProvider<Configuration>> lazyConfigurations = new HashMap<>();
 	private final List<AccessWidenerFile> transitiveAccessWideners = new ArrayList<>();
 
 	private LoomDependencyManager dependencyManager;
@@ -77,13 +80,13 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 	private IntermediaryMinecraftProvider<?> intermediaryMinecraftProvider;
 	private SrgMinecraftProvider<?> srgMinecraftProvider;
 	private InstallerData installerData;
-	private boolean refreshDeps;
 
 	// +-------------------+
 	// | Architectury Loom |
 	// +-------------------+
+	private static final String INCLUDE_PROPERTY = "loom.forge.include";
+	private final LazyBool supportsInclude;
 	private DependencyProviders dependencyProviders;
-	private ForgeRunsProvider forgeRunsProvider;
 
 	public LoomGradleExtensionImpl(Project project, LoomFiles files) {
 		super(project, files);
@@ -93,21 +96,14 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 		this.loomFiles = files;
 		this.unmappedMods = project.files();
 		this.forgeExtension = Suppliers.memoize(() -> isForge() ? project.getObjects().newInstance(ForgeExtensionImpl.class, project, this) : null);
+		this.supportsInclude = new LazyBool(() -> Boolean.parseBoolean(Objects.toString(project.findProperty(INCLUDE_PROPERTY))));
 
 		// Setup the default intermediate mappings provider.
 		setIntermediateMappingsProvider(IntermediaryMappingsProvider.class, provider -> {
 			provider.getIntermediaryUrl()
 					.convention(getIntermediaryUrl())
 					.finalizeValueOnRead();
-
-			provider.getRefreshDeps().set(project.provider(() -> LoomGradleExtension.get(project).refreshDeps()));
 		});
-
-		refreshDeps = project.getGradle().getStartParameter().isRefreshDependencies() || Boolean.getBoolean("loom.refresh");
-
-		if (refreshDeps) {
-			project.getLogger().lifecycle("Refresh dependencies is in use, loom will be significantly slower.");
-		}
 	}
 
 	@Override
@@ -231,6 +227,30 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 	}
 
 	@Override
+	public NamedDomainObjectProvider<Configuration> createLazyConfiguration(String name, Action<? super Configuration> configurationAction) {
+		NamedDomainObjectProvider<Configuration> provider = project.getConfigurations().register(name, configurationAction);
+
+		if (lazyConfigurations.containsKey(name)) {
+			throw new IllegalStateException("Duplicate configuration name" + name);
+		}
+
+		lazyConfigurations.put(name, provider);
+
+		return provider;
+	}
+
+	@Override
+	public NamedDomainObjectProvider<Configuration> getLazyConfigurationProvider(String name) {
+		NamedDomainObjectProvider<Configuration> provider = lazyConfigurations.get(name);
+
+		if (provider == null) {
+			throw new NullPointerException("Could not find provider with name: " + name);
+		}
+
+		return provider;
+	}
+
+	@Override
 	public MixinExtension getMixin() {
 		return this.mixinApExtension;
 	}
@@ -246,43 +266,9 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 	}
 
 	@Override
-	public DownloadBuilder download(String url) {
-		DownloadBuilder builder;
-
-		try {
-			builder = Download.create(url);
-		} catch (URISyntaxException e) {
-			throw new RuntimeException("Failed to create downloader for: " + e);
-		}
-
-		if (project.getGradle().getStartParameter().isOffline()) {
-			builder.offline();
-		}
-
-		if (refreshDeps()) {
-			builder.forceDownload();
-		}
-
-		return builder;
-	}
-
-	@Override
-	public boolean refreshDeps() {
-		return refreshDeps;
-	}
-
-	@Override
-	public void setRefreshDeps(boolean refreshDeps) {
-		this.refreshDeps = refreshDeps;
-	}
-
-	@Override
 	protected <T extends IntermediateMappingsProvider> void configureIntermediateMappingsProviderInternal(T provider) {
 		provider.getMinecraftVersion().set(getProject().provider(() -> getMinecraftProvider().minecraftVersion()));
 		provider.getMinecraftVersion().disallowChanges();
-
-		provider.getDownloader().set(this::download);
-		provider.getDownloader().disallowChanges();
 	}
 
 	@Override
@@ -297,6 +283,11 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 	}
 
 	@Override
+	public boolean supportsInclude() {
+		return !isForge() || supportsInclude.getAsBoolean();
+	}
+
+	@Override
 	public DependencyProviders getDependencyProviders() {
 		return dependencyProviders;
 	}
@@ -304,17 +295,5 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 	@Override
 	public void setDependencyProviders(DependencyProviders dependencyProviders) {
 		this.dependencyProviders = dependencyProviders;
-	}
-
-	@Override
-	public ForgeRunsProvider getForgeRunsProvider() {
-		ModPlatform.assertPlatform(this, ModPlatform.FORGE);
-		return forgeRunsProvider;
-	}
-
-	@Override
-	public void setForgeRunsProvider(ForgeRunsProvider forgeRunsProvider) {
-		ModPlatform.assertPlatform(this, ModPlatform.FORGE);
-		this.forgeRunsProvider = forgeRunsProvider;
 	}
 }

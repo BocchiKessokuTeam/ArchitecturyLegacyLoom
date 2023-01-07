@@ -31,7 +31,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.jar.Attributes;
 import java.util.jar.JarOutputStream;
@@ -117,7 +116,7 @@ public final class LoomCFRDecompiler implements LoomDecompiler {
 					builder.append("\t").append(src).append("\t").append(dst).append("\n");
 				}
 
-				writer.write(String.format(Locale.ENGLISH, "%s\t%d\t%d\n", name, maxLine, maxLineDest));
+				writer.write("%s\t%d\t%d\n".formatted(name, maxLine, maxLineDest));
 				writer.write(builder.toString());
 				writer.write("\n");
 			}

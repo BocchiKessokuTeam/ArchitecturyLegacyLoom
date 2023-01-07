@@ -32,14 +32,13 @@ import java.util.function.BiConsumer;
 import com.google.common.base.Preconditions;
 import org.gradle.api.Project;
 import org.gradle.api.plugins.JavaPlugin;
+import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.jvm.tasks.Jar;
 
 import net.fabricmc.loom.LoomGradleExtension;
-import net.fabricmc.loom.configuration.RemapConfigurations;
 import net.fabricmc.loom.task.AbstractRemapJarTask;
 import net.fabricmc.loom.util.Constants;
-import net.fabricmc.loom.util.gradle.SourceSetHelper;
 
 public abstract sealed class MinecraftSourceSets permits MinecraftSourceSets.Single, MinecraftSourceSets.Split {
 	public static MinecraftSourceSets get(Project project) {
@@ -64,8 +63,10 @@ public abstract sealed class MinecraftSourceSets permits MinecraftSourceSets.Sin
 	public abstract void afterEvaluate(Project project);
 
 	protected void createSourceSets(Project project) {
+		final LoomGradleExtension extension = LoomGradleExtension.get(project);
+
 		for (String name : getAllSourceSetNames()) {
-			project.getConfigurations().register(name, configuration -> configuration.setTransitive(false));
+			extension.createLazyConfiguration(name, configuration -> configuration.setTransitive(false));
 
 			// All the configurations extend the loader deps.
 			extendsFrom(name, Constants.Configurations.LOADER_DEPENDENCIES, project);
@@ -157,16 +158,18 @@ public abstract sealed class MinecraftSourceSets permits MinecraftSourceSets.Sin
 
 		// Called during evaluation, when the loom extension method is called.
 		private void evaluate(Project project) {
-			final LoomGradleExtension extension = LoomGradleExtension.get(project);
 			createSourceSets(project);
 
 			// Combined extends from the 2 environments.
 			extendsFrom(MINECRAFT_COMBINED_NAMED, MINECRAFT_COMMON_NAMED, project);
 			extendsFrom(MINECRAFT_COMBINED_NAMED, MINECRAFT_CLIENT_ONLY_NAMED, project);
 
+			final JavaPluginExtension javaExtension = project.getExtensions().getByType(JavaPluginExtension.class);
+			final LoomGradleExtension loomExtension = LoomGradleExtension.get(project);
+
 			// Register our new client only source set, main becomes common only, with their respective jars.
-			SourceSet mainSourceSet = SourceSetHelper.getMainSourceSet(project);
-			SourceSet clientOnlySourceSet = SourceSetHelper.createSourceSet(CLIENT_ONLY_SOURCE_SET_NAME, project);
+			SourceSet mainSourceSet = javaExtension.getSourceSets().getByName(SourceSet.MAIN_SOURCE_SET_NAME);
+			SourceSet clientOnlySourceSet = javaExtension.getSourceSets().create(CLIENT_ONLY_SOURCE_SET_NAME);
 
 			extendsFrom(List.of(
 					mainSourceSet.getCompileClasspathConfigurationName(),
@@ -193,14 +196,10 @@ public abstract sealed class MinecraftSourceSets permits MinecraftSourceSets.Sin
 							.plus(mainSourceSet.getOutput())
 			);
 
-			RemapConfigurations.configureClientConfigurations(project, clientOnlySourceSet);
-
 			// Include the client only output in the jars
 			project.getTasks().named(mainSourceSet.getJarTaskName(), Jar.class).configure(jar -> {
 				jar.from(clientOnlySourceSet.getOutput().getClassesDirs());
 				jar.from(clientOnlySourceSet.getOutput().getResourcesDir());
-
-				jar.dependsOn(project.getTasks().named(clientOnlySourceSet.getProcessResourcesTaskName()));
 			});
 
 			// Remap with the client compile classpath.
@@ -210,18 +209,14 @@ public abstract sealed class MinecraftSourceSets permits MinecraftSourceSets.Sin
 				);
 			});
 
-			// The sources task can be registered at a later time.
-			project.getTasks().configureEach(task -> {
-				if (!mainSourceSet.getSourcesJarTaskName().equals(task.getName()) || !(task instanceof Jar jar)) {
-					// Not the sources task we are looking for.
-					return;
-				}
+			if (project.getTasks().findByName(mainSourceSet.getSourcesJarTaskName()) == null) {
+				// No sources.
+				return;
+			}
 
-				// The client only sources to the combined sources jar.
+			project.getTasks().named(mainSourceSet.getSourcesJarTaskName(), Jar.class).configure(jar -> {
 				jar.from(clientOnlySourceSet.getAllSource());
 			});
-
-			extension.getInterfaceInjection().getInterfaceInjectionSourceSets().add(clientOnlySourceSet);
 		}
 
 		@Override
@@ -229,8 +224,10 @@ public abstract sealed class MinecraftSourceSets permits MinecraftSourceSets.Sin
 		}
 
 		public static SourceSet getClientSourceSet(Project project) {
-			Preconditions.checkArgument(LoomGradleExtension.get(project).areEnvironmentSourceSetsSplit(), "Cannot get client only sourceset as project is not split");
-			return SourceSetHelper.getSourceSetByName(CLIENT_ONLY_SOURCE_SET_NAME, project);
+			Preconditions.checkArgument(LoomGradleExtension.get(project).areEnvironmentSourceSetsSplit());
+
+			final JavaPluginExtension javaExtension = project.getExtensions().getByType(JavaPluginExtension.class);
+			return javaExtension.getSourceSets().getByName(CLIENT_ONLY_SOURCE_SET_NAME);
 		}
 	}
 }

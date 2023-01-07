@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2016-2022 FabricMC
+ * Copyright (c) 2016-2021 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,7 +30,10 @@ import java.util.function.Supplier;
 
 import org.cadixdev.lorenz.MappingSet;
 import org.cadixdev.mercury.Mercury;
+import org.gradle.api.Action;
+import org.gradle.api.NamedDomainObjectProvider;
 import org.gradle.api.Project;
+import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.FileCollection;
 
@@ -42,7 +45,6 @@ import net.fabricmc.loom.configuration.accesswidener.AccessWidenerFile;
 import net.fabricmc.loom.configuration.processors.JarProcessorManager;
 import net.fabricmc.loom.configuration.providers.forge.DependencyProviders;
 import net.fabricmc.loom.configuration.providers.forge.ForgeProvider;
-import net.fabricmc.loom.configuration.providers.forge.ForgeRunsProvider;
 import net.fabricmc.loom.configuration.providers.forge.ForgeUniversalProvider;
 import net.fabricmc.loom.configuration.providers.forge.ForgeUserdevProvider;
 import net.fabricmc.loom.configuration.providers.forge.PatchProvider;
@@ -56,7 +58,6 @@ import net.fabricmc.loom.configuration.providers.minecraft.mapped.SrgMinecraftPr
 import net.fabricmc.loom.extension.LoomFiles;
 import net.fabricmc.loom.extension.MixinExtension;
 import net.fabricmc.loom.util.ModPlatform;
-import net.fabricmc.loom.util.download.DownloadBuilder;
 
 public interface LoomGradleExtension extends LoomGradleExtensionAPI {
 	static LoomGradleExtension get(Project project) {
@@ -64,6 +65,15 @@ public interface LoomGradleExtension extends LoomGradleExtensionAPI {
 	}
 
 	LoomFiles getFiles();
+
+	default NamedDomainObjectProvider<Configuration> createLazyConfiguration(String name) {
+		return createLazyConfiguration(name, config -> {
+		});
+	}
+
+	NamedDomainObjectProvider<Configuration> createLazyConfiguration(String name, Action<? super Configuration> configurationAction);
+
+	NamedDomainObjectProvider<Configuration> getLazyConfigurationProvider(String name);
 
 	MappingSet getOrCreateSrcMappingCache(int id, Supplier<MappingSet> factory);
 
@@ -126,12 +136,6 @@ public interface LoomGradleExtension extends LoomGradleExtensionAPI {
 
 	void addTransitiveAccessWideners(List<AccessWidenerFile> accessWidenerFiles);
 
-	DownloadBuilder download(String url);
-
-	boolean refreshDeps();
-
-	void setRefreshDeps(boolean refreshDeps);
-
 	// ===================
 	//  Architectury Loom
 	// ===================
@@ -155,6 +159,8 @@ public interface LoomGradleExtension extends LoomGradleExtensionAPI {
 		return isForge() && !getMcpConfigProvider().isOfficial();
 	}
 
+	boolean supportsInclude();
+
 	DependencyProviders getDependencyProviders();
 
 	void setDependencyProviders(DependencyProviders dependencyProviders);
@@ -174,7 +180,4 @@ public interface LoomGradleExtension extends LoomGradleExtensionAPI {
 	default ForgeProvider getForgeProvider() {
 		return getDependencyProviders().getProvider(ForgeProvider.class);
 	}
-
-	ForgeRunsProvider getForgeRunsProvider();
-	void setForgeRunsProvider(ForgeRunsProvider forgeRunsProvider);
 }

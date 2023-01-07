@@ -32,8 +32,8 @@ import java.util.Arrays;
 import java.util.Objects;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import dev.architectury.loom.metadata.ModMetadataFile;
 
 import net.fabricmc.loom.util.ZipUtils;
 
@@ -55,36 +55,93 @@ public record AccessWidenerFile(
 		}
 
 		if (modJsonBytes == null) {
-			ModMetadataFile modMetadata;
-			String awPath;
+			if (ZipUtils.contains(modJarPath, "architectury.common.json")) {
+				String awPath = null;
+				byte[] commonJsonBytes;
 
-			try {
-				modMetadata = ModMetadataFile.fromJar(modJarPath);
-
-				if (modMetadata != null) {
-					awPath = modMetadata.getAccessWidener();
-					if (awPath == null) return null;
-				} else {
-					// No known mod metadata
-					return null;
+				try {
+					commonJsonBytes = ZipUtils.unpackNullable(modJarPath, "architectury.common.json");
+				} catch (IOException e) {
+					throw new UncheckedIOException("Failed to read architectury.common.json file from: " + modJarPath.toAbsolutePath(), e);
 				}
-			} catch (IOException e) {
-				throw new UncheckedIOException("Could not read mod metadata from " + modJarPath.toAbsolutePath(), e);
+
+				if (commonJsonBytes != null) {
+					JsonObject jsonObject = new Gson().fromJson(new String(commonJsonBytes, StandardCharsets.UTF_8), JsonObject.class);
+
+					if (jsonObject.has("accessWidener")) {
+						awPath = jsonObject.get("accessWidener").getAsString();
+					} else {
+						return null;
+					}
+				} else {
+					// ???????????
+					throw new IllegalArgumentException("The architectury.common.json file does not exist.");
+				}
+
+				byte[] content;
+
+				try {
+					content = ZipUtils.unpack(modJarPath, awPath);
+				} catch (IOException e) {
+					throw new UncheckedIOException("Could not find access widener file (%s) defined in the architectury.common.json file of %s".formatted(awPath, modJarPath.toAbsolutePath()), e);
+				}
+
+				return new AccessWidenerFile(
+						awPath,
+						modJarPath.getFileName().toString(),
+						content
+				);
 			}
 
-			byte[] content;
+			if (ZipUtils.contains(modJarPath, "quilt.mod.json")) {
+				String awPath = null;
+				byte[] quiltModBytes;
 
-			try {
-				content = ZipUtils.unpack(modJarPath, awPath);
-			} catch (IOException e) {
-				throw new UncheckedIOException("Could not find access widener file (%s) defined in the %s file of %s".formatted(awPath, modMetadata.getFileName(), modJarPath.toAbsolutePath()), e);
+				try {
+					quiltModBytes = ZipUtils.unpackNullable(modJarPath, "quilt.mod.json");
+				} catch (IOException e) {
+					throw new UncheckedIOException("Failed to read quilt.mod.json file from: " + modJarPath.toAbsolutePath(), e);
+				}
+
+				if (quiltModBytes != null) {
+					JsonObject jsonObject = new Gson().fromJson(new String(quiltModBytes, StandardCharsets.UTF_8), JsonObject.class);
+
+					if (jsonObject.has("access_widener")) {
+						if (jsonObject.get("access_widener").isJsonArray()) {
+							JsonArray array = jsonObject.get("access_widener").getAsJsonArray();
+
+							if (array.size() != 1) {
+								throw new UnsupportedOperationException("Loom does not support multiple access wideners in one mod!");
+							}
+
+							awPath = array.get(0).getAsString();
+						} else {
+							awPath = jsonObject.get("access_widener").getAsString();
+						}
+					} else {
+						return null;
+					}
+				} else {
+					// ???????????
+					throw new IllegalArgumentException("The quilt.mod.json file does not exist.");
+				}
+
+				byte[] content;
+
+				try {
+					content = ZipUtils.unpack(modJarPath, awPath);
+				} catch (IOException e) {
+					throw new UncheckedIOException("Could not find access widener file (%s) defined in the quilt.mod.json file of %s".formatted(awPath, modJarPath.toAbsolutePath()), e);
+				}
+
+				return new AccessWidenerFile(
+						awPath,
+						modJarPath.getFileName().toString(),
+						content
+				);
 			}
 
-			return new AccessWidenerFile(
-					awPath,
-					Objects.requireNonNullElseGet(modMetadata.getId(), () -> modJarPath.getFileName().toString()),
-					content
-			);
+			return null;
 		}
 
 		JsonObject jsonObject = new Gson().fromJson(new String(modJsonBytes, StandardCharsets.UTF_8), JsonObject.class);

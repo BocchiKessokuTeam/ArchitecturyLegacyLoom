@@ -37,6 +37,7 @@ import dev.architectury.tinyremapper.TinyRemapper;
 import org.gradle.api.Project;
 
 import net.fabricmc.loom.LoomGradleExtension;
+import net.fabricmc.loom.LoomGradlePlugin;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.configuration.providers.mappings.MappingsProviderImpl;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftProvider;
@@ -44,8 +45,6 @@ import net.fabricmc.loom.configuration.providers.minecraft.MinecraftSourceSets;
 import net.fabricmc.loom.configuration.providers.minecraft.SignatureFixerApplyVisitor;
 import net.fabricmc.loom.util.TinyRemapperHelper;
 import net.fabricmc.loom.util.srg.InnerClassRemapper;
-import net.fabricmc.loom.util.srg.RemapObjectHolderVisitor;
-import net.fabricmc.mappingio.tree.MemoryMappingTree;
 
 public abstract class AbstractMappedMinecraftProvider<M extends MinecraftProvider> implements MappedMinecraftProvider.ProviderImpl {
 	protected final M minecraftProvider;
@@ -70,7 +69,7 @@ public abstract class AbstractMappedMinecraftProvider<M extends MinecraftProvide
 		final List<RemappedJars> remappedJars = getRemappedJars();
 		assert !remappedJars.isEmpty();
 
-		if (!areOutputsValid(remappedJars) || extension.refreshDeps()) {
+		if (!areOutputsValid(remappedJars) || LoomGradlePlugin.refreshDeps) {
 			try {
 				remapInputs(remappedJars);
 			} catch (Throwable t) {
@@ -155,11 +154,6 @@ public abstract class AbstractMappedMinecraftProvider<M extends MinecraftProvide
 			throw new RuntimeException("Failed to remap JAR " + remappedJars.inputJar() + " with mappings from " + mappingsProvider.tinyMappings, e);
 		} finally {
 			remapper.finish();
-		}
-
-		if (extension.isForgeAndOfficial()) {
-			MemoryMappingTree mappingsWithSrg = extension.getMappingsProvider().getMappingsWithSrg();
-			RemapObjectHolderVisitor.remapObjectHolder(remappedJars.outputJar(), "net.minecraftforge.registries.ObjectHolderRegistry", mappingsWithSrg, "srg", "named");
 		}
 	}
 

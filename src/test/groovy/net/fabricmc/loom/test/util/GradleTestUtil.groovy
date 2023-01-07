@@ -24,17 +24,8 @@
 
 package net.fabricmc.loom.test.util
 
-import net.fabricmc.loom.LoomGradleExtension
-import org.gradle.api.Project
-import org.gradle.api.file.SourceDirectorySet
-import org.gradle.api.internal.tasks.DefaultSourceSet
-import org.gradle.api.model.ObjectFactory
-import org.gradle.api.plugins.ExtensionContainer
 import org.gradle.api.provider.Property
-import org.gradle.api.tasks.SourceSet
-import org.gradle.api.tasks.util.PatternFilterable
 
-import static org.mockito.ArgumentMatchers.any
 import static org.mockito.Mockito.mock
 import static org.mockito.Mockito.when
 
@@ -44,50 +35,4 @@ class GradleTestUtil {
         when(mock.get()).thenReturn(Objects.requireNonNull(value))
         return mock
     }
-
-	static SourceSet mockSourceSet(String name) {
-		def sourceSet = new DefaultSourceSet(name, mockObjectFactory()) {
-			final ExtensionContainer extensions = null
-		}
-		return sourceSet
-	}
-
-	static Project mockProject() {
-		def mock = mock(Project.class)
-		def extensions = mockExtensionContainer()
-		when(mock.getExtensions()).thenReturn(extensions)
-		return mock
-	}
-
-	static ExtensionContainer mockExtensionContainer() {
-		def mock = mock(ExtensionContainer.class)
-		def extension = mockLoomGradleExtension()
-		when(mock.getByName("loom")).thenReturn(extension)
-		return mock
-	}
-
-	static LoomGradleExtension mockLoomGradleExtension() {
-		def mock = mock(LoomGradleExtension.class)
-		when(mock.refreshDeps()).thenReturn(false)
-		return mock
-	}
-
-	static ObjectFactory mockObjectFactory() {
-		def mock = mock(ObjectFactory.class)
-		def mockSourceDirectorySet = mockSourceDirectorySet()
-		when(mock.sourceDirectorySet(any(), any())).thenReturn(mockSourceDirectorySet)
-		return mock
-	}
-
-	static SourceDirectorySet mockSourceDirectorySet() {
-		def mock = mock(SourceDirectorySet.class)
-		def mockPatternFilterable = mockPatternFilterable()
-		when(mock.getFilter()).thenReturn(mockPatternFilterable)
-		return mock
-	}
-
-	static PatternFilterable mockPatternFilterable() {
-		def mock = mock(PatternFilterable.class)
-		return mock
-	}
 }

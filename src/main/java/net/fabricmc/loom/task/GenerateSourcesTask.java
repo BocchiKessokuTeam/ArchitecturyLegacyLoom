@@ -51,9 +51,7 @@ import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.InputFiles;
-import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.TaskAction;
-import org.gradle.work.DisableCachingByDefault;
 import org.gradle.workers.WorkAction;
 import org.gradle.workers.WorkParameters;
 import org.gradle.workers.WorkQueue;
@@ -67,11 +65,8 @@ import net.fabricmc.loom.api.decompilers.LoomDecompiler;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.configuration.accesswidener.TransitiveAccessWidenerMappingsProcessor;
 import net.fabricmc.loom.configuration.ifaceinject.InterfaceInjectionProcessor;
-import net.fabricmc.loom.configuration.processors.ModJavadocProcessor;
-import net.fabricmc.loom.configuration.sources.ForgeSourcesRemapper;
+import net.fabricmc.loom.configuration.mods.ModJavadocProcessor;
 import net.fabricmc.loom.decompilers.LineNumberRemapper;
-import net.fabricmc.loom.decompilers.linemap.LineMapClassFilter;
-import net.fabricmc.loom.decompilers.linemap.LineMapVisitor;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.FileSystemUtil;
 import net.fabricmc.loom.util.IOStringConsumer;
@@ -86,7 +81,6 @@ import net.fabricmc.mappingio.adapter.MappingSourceNsSwitch;
 import net.fabricmc.mappingio.format.Tiny2Writer;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
 
-@DisableCachingByDefault
 public abstract class GenerateSourcesTask extends AbstractLoomTask {
 	private final DecompilerOptions decompilerOptions;
 
@@ -105,9 +99,6 @@ public abstract class GenerateSourcesTask extends AbstractLoomTask {
 	@InputFiles
 	public abstract ConfigurableFileCollection getClasspath();
 
-	@OutputFile
-	public abstract RegularFileProperty getOutputJar();
-
 	@Inject
 	public abstract WorkerExecutor getWorkerExecutor();
 
@@ -121,8 +112,6 @@ public abstract class GenerateSourcesTask extends AbstractLoomTask {
 		getOutputs().upToDateWhen((o) -> false);
 		getClasspath().from(decompilerOptions.getClasspath()).finalizeValueOnRead();
 		dependsOn(decompilerOptions.getClasspath().getBuiltBy());
-
-		getOutputJar().fileProvider(getProject().provider(() -> getMappedJarFileWithSuffix("-sources.jar")));
 	}
 
 	@TaskAction
@@ -150,11 +139,6 @@ public abstract class GenerateSourcesTask extends AbstractLoomTask {
 		} finally {
 			Files.deleteIfExists(ipcPath);
 		}
-
-		// Inject Forge's own sources
-		if (getExtension().isForge()) {
-			ForgeSourcesRemapper.addForgeSources(getProject(), getOutputJar().get().getAsFile().toPath());
-		}
 	}
 
 	private void doWork(@Nullable IPCServer ipcServer) {
@@ -166,7 +150,7 @@ public abstract class GenerateSourcesTask extends AbstractLoomTask {
 
 			params.getInputJar().set(getInputJar());
 			params.getRuntimeJar().set(getRuntimeJar());
-			params.getSourcesDestinationJar().set(getOutputJar());
+			params.getSourcesDestinationJar().set(getMappedJarFileWithSuffix("-sources.jar"));
 			params.getLinemap().set(getMappedJarFileWithSuffix("-sources.lmap"));
 			params.getLinemapJar().set(getMappedJarFileWithSuffix("-linemapped.jar"));
 			params.getMappings().set(getMappings().toFile());
@@ -176,9 +160,6 @@ public abstract class GenerateSourcesTask extends AbstractLoomTask {
 			}
 
 			params.getClassPath().setFrom(getProject().getConfigurations().getByName(Constants.Configurations.MINECRAFT_DEPENDENCIES));
-
-			// Architectury
-			params.getForge().set(getExtension().isForge());
 		});
 
 		try {
@@ -203,7 +184,7 @@ public abstract class GenerateSourcesTask extends AbstractLoomTask {
 
 		return getWorkerExecutor().processIsolation(spec -> {
 			spec.forkOptions(forkOptions -> {
-				forkOptions.setMaxHeapSize(String.format(Locale.ENGLISH, "%dm", decompilerOptions.getMemory().get()));
+				forkOptions.setMaxHeapSize("%dm".formatted(decompilerOptions.getMemory().get()));
 				forkOptions.systemProperty(WorkerDaemonClientsManagerHelper.MARKER_PROP, jvmMarkerValue);
 			});
 			spec.getClasspath().from(getClasspath());
@@ -228,9 +209,6 @@ public abstract class GenerateSourcesTask extends AbstractLoomTask {
 		RegularFileProperty getIPCPath();
 
 		ConfigurableFileCollection getClassPath();
-
-		// Architectury
-		Property<Boolean> getForge();
 	}
 
 	public abstract static class DecompileAction implements WorkAction<DecompileParams> {
@@ -295,16 +273,6 @@ public abstract class GenerateSourcesTask extends AbstractLoomTask {
 			}
 
 			if (Files.exists(linemap)) {
-				if (getParameters().getForge().get()) {
-					try {
-						// Remove Forge classes from linemap
-						// TODO: We should instead not decompile Forge's classes at all
-						LineMapVisitor.process(linemap, next -> new LineMapClassFilter(next, name -> !name.startsWith("net/minecraftforge/")));
-					} catch (IOException e) {
-						throw new UncheckedIOException("Failed to process linemap", e);
-					}
-				}
-
 				try {
 					// Line map the actually jar used to run the game, not the one used to decompile
 					remapLineNumbers(metadata.logger(), runtimeJar, linemap, linemapJar);

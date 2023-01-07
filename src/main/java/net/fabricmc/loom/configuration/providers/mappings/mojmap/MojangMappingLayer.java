@@ -26,6 +26,7 @@ package net.fabricmc.loom.configuration.providers.mappings.mojmap;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,19 +39,26 @@ import net.fabricmc.loom.api.mappings.layered.MappingLayer;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.configuration.providers.mappings.intermediary.IntermediaryMappingLayer;
 import net.fabricmc.loom.configuration.providers.mappings.utils.DstNameFilterMappingVisitor;
+import net.fabricmc.loom.configuration.providers.minecraft.MinecraftVersionMeta;
+import net.fabricmc.loom.util.HashedDownloadUtil;
 import net.fabricmc.mappingio.MappingVisitor;
 import net.fabricmc.mappingio.adapter.MappingSourceNsSwitch;
 import net.fabricmc.mappingio.format.ProGuardReader;
 
 public record MojangMappingLayer(String minecraftVersion,
-									Path clientMappings,
-									Path serverMappings,
-									boolean nameSyntheticMembers,
+									MinecraftVersionMeta.Download clientDownload,
+									MinecraftVersionMeta.Download serverDownload,
+									Path workingDir, boolean nameSyntheticMembers,
 									Logger logger,
 									MojangMappingsSpec.SilenceLicenseOption silenceLicense) implements MappingLayer {
 	private static final Pattern SYNTHETIC_NAME_PATTERN = Pattern.compile("^(access|this|val\\$this|lambda\\$.*)\\$[0-9]+$");
 	@Override
 	public void visit(MappingVisitor mappingVisitor) throws IOException {
+		Path clientMappings = workingDir().resolve("%s.client.txt".formatted(minecraftVersion));
+		Path serverMappings = workingDir().resolve("%s.server.txt".formatted(minecraftVersion));
+
+		download(clientMappings, serverMappings);
+
 		if (!silenceLicense.isSilent()) {
 			printMappingsLicense(clientMappings);
 		}
@@ -66,6 +74,11 @@ public record MojangMappingLayer(String minecraftVersion,
 			ProGuardReader.read(clientBufferedReader, MappingsNamespace.NAMED.toString(), MappingsNamespace.OFFICIAL.toString(), nsSwitch);
 			ProGuardReader.read(serverBufferedReader, MappingsNamespace.NAMED.toString(), MappingsNamespace.OFFICIAL.toString(), nsSwitch);
 		}
+	}
+
+	private void download(Path clientMappings, Path serverMappings) throws IOException {
+		HashedDownloadUtil.downloadIfInvalid(new URL(clientDownload().url()), clientMappings.toFile(), clientDownload().sha1(), logger(), false);
+		HashedDownloadUtil.downloadIfInvalid(new URL(serverDownload().url()), serverMappings.toFile(), serverDownload().sha1(), logger(), false);
 	}
 
 	private void printMappingsLicense(Path clientMappings) {

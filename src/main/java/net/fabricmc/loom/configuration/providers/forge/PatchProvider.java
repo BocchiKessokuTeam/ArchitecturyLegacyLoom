@@ -24,22 +24,22 @@
 
 package net.fabricmc.loom.configuration.providers.forge;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
+import java.net.URI;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
+import com.google.common.collect.ImmutableMap;
 import org.gradle.api.Project;
 
 import net.fabricmc.loom.configuration.DependencyInfo;
 import net.fabricmc.loom.util.Constants;
-import net.fabricmc.loom.util.FileSystemUtil;
 
 public class PatchProvider extends DependencyProvider {
 	public Path clientPatches;
 	public Path serverPatches;
-	public Path projectCacheFolder;
 
 	public PatchProvider(Project project) {
 		super(project);
@@ -47,34 +47,20 @@ public class PatchProvider extends DependencyProvider {
 
 	@Override
 	public void provide(DependencyInfo dependency) throws Exception {
-		init(dependency.getDependency().getVersion());
+		Path cacheFolder = getExtension().getForgeProvider().getGlobalCache().toPath();
+		clientPatches = cacheFolder.resolve("patches-client.lzma");
+		serverPatches = cacheFolder.resolve("patches-server.lzma");
 
-		if (Files.notExists(clientPatches) || Files.notExists(serverPatches) || refreshDeps()) {
+		if (Files.notExists(clientPatches) || Files.notExists(serverPatches) || isRefreshDeps()) {
 			getProject().getLogger().info(":extracting forge patches");
 
 			Path installerJar = dependency.resolveFile().orElseThrow(() -> new RuntimeException("Could not resolve Forge installer")).toPath();
 
-			try (FileSystemUtil.Delegate fs = FileSystemUtil.getJarFileSystem(installerJar, false)) {
+			try (FileSystem fs = FileSystems.newFileSystem(new URI("jar:" + installerJar.toUri()), ImmutableMap.of("create", false))) {
 				Files.copy(fs.getPath("data", "client.lzma"), clientPatches, StandardCopyOption.REPLACE_EXISTING);
 				Files.copy(fs.getPath("data", "server.lzma"), serverPatches, StandardCopyOption.REPLACE_EXISTING);
 			}
 		}
-	}
-
-	private void init(String forgeVersion) {
-		projectCacheFolder = getMinecraftProvider().dir("forge/" + forgeVersion).toPath();
-		clientPatches = projectCacheFolder.resolve("patches-client.lzma");
-		serverPatches = projectCacheFolder.resolve("patches-server.lzma");
-
-		try {
-			Files.createDirectories(projectCacheFolder);
-		} catch (IOException e) {
-			throw new UncheckedIOException(e);
-		}
-	}
-
-	public Path getProjectCacheFolder() {
-		return projectCacheFolder;
 	}
 
 	@Override

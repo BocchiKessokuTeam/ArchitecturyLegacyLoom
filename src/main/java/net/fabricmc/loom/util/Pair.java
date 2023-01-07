@@ -24,7 +24,5 @@
 
 package net.fabricmc.loom.util;
 
-import java.io.Serializable;
-
-public record Pair<L, R>(L left, R right) implements Serializable {
+public record Pair<L, R>(L left, R right) {
 }

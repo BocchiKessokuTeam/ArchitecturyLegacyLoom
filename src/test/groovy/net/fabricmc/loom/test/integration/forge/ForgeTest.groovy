@@ -41,7 +41,7 @@ class ForgeTest extends Specification implements GradleProjectTestTrait {
 				.replace('@MAPPINGS@', mappings)
 
 		when:
-			def result = gradle.run(task: "build")
+			def result = gradle.run(task: "build", args: "")
 
 		then:
 			result.task(":build").outcome == SUCCESS

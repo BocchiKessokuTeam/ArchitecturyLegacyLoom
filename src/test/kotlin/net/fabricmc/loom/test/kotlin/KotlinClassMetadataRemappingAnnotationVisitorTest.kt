@@ -30,6 +30,7 @@ import net.fabricmc.loom.kotlin.remapping.KotlinMetadataRemappingClassVisitor
 import net.fabricmc.loom.util.TinyRemapperHelper
 import net.fabricmc.mappingio.MappingReader
 import net.fabricmc.mappingio.tree.MemoryMappingTree
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
@@ -70,6 +71,8 @@ class KotlinClassMetadataRemappingAnnotationVisitorTest {
 
         println(d2In)
         println(d2Out)
+
+        assertEquals(d2In.size, d2Out.size)
     }
 
     @Test
@@ -92,6 +95,8 @@ class KotlinClassMetadataRemappingAnnotationVisitorTest {
 
         println(d2In)
         println(d2Out)
+
+        assertEquals(d2In.size, d2Out.size)
     }
 
     private fun getClassBytes(name: String): ByteArray {

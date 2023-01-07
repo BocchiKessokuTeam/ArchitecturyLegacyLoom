@@ -26,9 +26,6 @@ package net.fabricmc.loom.test.unit
 
 import net.fabricmc.loom.configuration.providers.mappings.IntermediaryMappingsProvider
 import net.fabricmc.loom.test.util.GradleTestUtil
-import net.fabricmc.loom.util.download.Download
-
-import java.util.function.Function
 
 import static org.mockito.Mockito.spy
 import static org.mockito.Mockito.when
@@ -37,14 +34,12 @@ class LoomMocks {
     static IntermediaryMappingsProvider intermediaryMappingsProviderMock(String minecraftVersion, String intermediaryUrl) {
         def minecraftVersionProperty = GradleTestUtil.mockProperty(minecraftVersion)
         def intermediaryUrlProperty = GradleTestUtil.mockProperty(intermediaryUrl)
-        def downloaderProperty = GradleTestUtil.mockProperty(Download.&create as Function)
 
         Objects.requireNonNull(minecraftVersionProperty.get())
 
         def mock = spy(IntermediaryMappingsProvider.class)
         when(mock.getMinecraftVersion()).thenReturn(minecraftVersionProperty)
         when(mock.getIntermediaryUrl()).thenReturn(intermediaryUrlProperty)
-        when(mock.getDownloader()).thenReturn(downloaderProperty)
         return mock
     }
 }

@@ -53,13 +53,13 @@ import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.Opcodes;
 
 import net.fabricmc.loom.LoomGradleExtension;
+import net.fabricmc.loom.LoomGradlePlugin;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.configuration.providers.mappings.IntermediateMappingsService;
 import net.fabricmc.loom.configuration.providers.mappings.MappingsProviderImpl;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftProvider;
 import net.fabricmc.loom.util.FileSystemUtil;
 import net.fabricmc.loom.util.ThreadingUtils;
-import net.fabricmc.loom.util.srg.SrgMerger;
 import net.fabricmc.mappingio.MappingReader;
 import net.fabricmc.mappingio.format.Tiny2Writer;
 import net.fabricmc.mappingio.tree.MappingTree;
@@ -79,11 +79,11 @@ public class FieldMigratedMappingsProvider extends MappingsProviderImpl {
 	@Override
 	protected void setup(Project project, MinecraftProvider minecraftProvider, Path inputJar) throws IOException {
 		LoomGradleExtension extension = LoomGradleExtension.get(project);
-		PatchProvider patchProvider = extension.getPatchProvider();
-		migratedFieldsCache = patchProvider.getProjectCacheFolder().resolve("migrated-fields.json");
+		ForgeProvider forgeProvider = extension.getForgeProvider();
+		migratedFieldsCache = forgeProvider.getGlobalCache().toPath().resolve("migrated-fields.json");
 		migratedFields.clear();
 
-		if (minecraftProvider.refreshDeps()) {
+		if (LoomGradlePlugin.refreshDeps) {
 			Files.deleteIfExists(migratedFieldsCache);
 		} else if (Files.exists(migratedFieldsCache)) {
 			try (BufferedReader reader = Files.newBufferedReader(migratedFieldsCache)) {
@@ -112,10 +112,8 @@ public class FieldMigratedMappingsProvider extends MappingsProviderImpl {
 		this.rawTinyMappingsWithSrg = tinyMappingsWithSrg;
 
 		if (extension.shouldGenerateSrgTiny()) {
-			if (Files.notExists(rawTinyMappingsWithSrg) || extension.refreshDeps()) {
-				// Merge tiny mappings with srg
-				SrgMerger.ExtraMappings extraMappings = SrgMerger.ExtraMappings.ofMojmapTsrg(getMojmapSrgFileIfPossible(project));
-				SrgMerger.mergeSrg(getRawSrgFile(project), rawTinyMappings, rawTinyMappingsWithSrg, extraMappings, true);
+			if (Files.notExists(rawTinyMappingsWithSrg) || isRefreshDeps()) {
+				mergeSrg(project, rawTinyMappings, rawTinyMappingsWithSrg);
 			}
 		}
 

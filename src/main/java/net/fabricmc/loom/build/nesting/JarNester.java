@@ -28,7 +28,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Collection;
-import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -39,15 +38,13 @@ import com.google.gson.JsonObject;
 import org.gradle.api.UncheckedIOException;
 import org.slf4j.Logger;
 
-import net.fabricmc.loom.LoomGradlePlugin;
-import net.fabricmc.loom.build.nesting.IncludedJarFactory.NestedFile;
 import net.fabricmc.loom.util.ModPlatform;
 import net.fabricmc.loom.util.ModUtils;
 import net.fabricmc.loom.util.Pair;
 import net.fabricmc.loom.util.ZipUtils;
 
 public class JarNester {
-	public static void nestJars(Collection<File> jars, List<NestedFile> forgeJars, File modJar, ModPlatform platform, Logger logger) {
+	public static void nestJars(Collection<File> jars, File modJar, ModPlatform platform, Logger logger) {
 		if (jars.isEmpty()) {
 			logger.debug("Nothing to nest into " + modJar.getName());
 			return;
@@ -63,11 +60,6 @@ public class JarNester {
 					throw new UncheckedIOException(e);
 				}
 			}).collect(Collectors.toList()));
-
-			if (platform == ModPlatform.FORGE) {
-				handleForgeJarJar(forgeJars, modJar, logger);
-				return;
-			}
 
 			int count = ZipUtils.transformJson(JsonObject.class, modJar.toPath(), Stream.of(platform == ModPlatform.FABRIC ? new Pair<>("fabric.mod.json", json -> {
 				JsonArray nestedJars = json.getAsJsonArray("jars");
@@ -115,7 +107,7 @@ public class JarNester {
 
 				for (File file : jars) {
 					String nestedJarPath = "META-INF/jars/" + file.getName();
-					Preconditions.checkArgument(ModUtils.isMod(file, platform), "Cannot nest none mod jar: " + file.getName());
+					Preconditions.checkArgument(ModUtils.isMod(file, platform) || ModUtils.isMod(file, ModPlatform.FABRIC), "Cannot nest none mod jar: " + file.getName());
 
 					for (JsonElement nestedJar : nestedJars) {
 						String nestedJarString = nestedJar.getAsString();
@@ -139,42 +131,5 @@ public class JarNester {
 		} catch (IOException e) {
 			throw new java.io.UncheckedIOException("Failed to nest jars into " + modJar.getName(), e);
 		}
-	}
-
-	private static void handleForgeJarJar(List<NestedFile> forgeJars, File modJar, Logger logger) throws IOException {
-		JsonObject json = new JsonObject();
-		JsonArray nestedJars = new JsonArray();
-
-		for (NestedFile nestedFile : forgeJars) {
-			IncludedJarFactory.Metadata metadata = nestedFile.metadata();
-			File file = nestedFile.file();
-			String nestedJarPath = "META-INF/jars/" + file.getName();
-
-			for (JsonElement nestedJar : nestedJars) {
-				JsonObject jsonObject = nestedJar.getAsJsonObject();
-
-				if (jsonObject.has("path") && jsonObject.get("path").getAsString().equals(nestedJarPath)) {
-					throw new IllegalStateException("Cannot nest 2 jars at the same path: " + nestedJarPath);
-				}
-			}
-
-			JsonObject jsonObject = new JsonObject();
-			JsonObject identifierObject = new JsonObject();
-			JsonObject versionObject = new JsonObject();
-			identifierObject.addProperty("group", metadata.group());
-			identifierObject.addProperty("artifact", metadata.name());
-			versionObject.addProperty("range", "[" + metadata.version() + ",)");
-			versionObject.addProperty("artifactVersion", metadata.version());
-			jsonObject.add("identifier", identifierObject);
-			jsonObject.add("version", versionObject);
-			jsonObject.addProperty("path", nestedJarPath);
-			nestedJars.add(jsonObject);
-
-			logger.debug("Nested " + nestedJarPath + " into " + modJar.getName());
-		}
-
-		json.add("jars", nestedJars);
-
-		ZipUtils.add(modJar.toPath(), "META-INF/jarjar/metadata.json", LoomGradlePlugin.GSON.toJson(json));
 	}
 }

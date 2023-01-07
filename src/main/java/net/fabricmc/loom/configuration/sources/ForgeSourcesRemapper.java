@@ -45,13 +45,14 @@ import org.cadixdev.lorenz.MappingSet;
 import org.cadixdev.mercury.Mercury;
 import org.cadixdev.mercury.remapper.MercuryRemapper;
 import org.gradle.api.Project;
+import org.gradle.api.artifacts.ResolvedArtifact;
 
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
+import net.fabricmc.loom.build.ModCompileRemapper;
 import net.fabricmc.loom.task.GenerateSourcesTask;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.DeletingFileVisitor;
-import net.fabricmc.loom.util.DependencyDownloader;
 import net.fabricmc.loom.util.FileSystemUtil;
 import net.fabricmc.loom.util.ForgeToolExecutor;
 import net.fabricmc.loom.util.SourceRemapper;
@@ -107,12 +108,14 @@ public class ForgeSourcesRemapper {
 	}
 
 	public static void provideForgeSources(Project project, BiConsumer<String, byte[]> consumer) throws IOException {
-		LoomGradleExtension extension = LoomGradleExtension.get(project);
-		String sourceDependency = extension.getForgeUserdevProvider().getJson().getAsJsonPrimitive("sources").getAsString();
 		List<Path> forgeInstallerSources = new ArrayList<>();
 
-		for (File file : DependencyDownloader.download(project, sourceDependency)) {
-			forgeInstallerSources.add(file.toPath());
+		for (ResolvedArtifact artifact : project.getConfigurations().getByName(Constants.Configurations.FORGE_INSTALLER).getResolvedConfiguration().getResolvedArtifacts()) {
+			File forgeInstallerSource = ModCompileRemapper.findSources(project.getDependencies(), artifact);
+
+			if (forgeInstallerSource != null) {
+				forgeInstallerSources.add(forgeInstallerSource.toPath());
+			}
 		}
 
 		project.getLogger().lifecycle(":found {} forge source jars", forgeInstallerSources.size());

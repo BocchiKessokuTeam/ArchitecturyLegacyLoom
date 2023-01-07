@@ -24,8 +24,14 @@
 
 package net.fabricmc.loom.util;
 
-public record Architecture(String name) {
+public class Architecture {
 	public static final Architecture CURRENT = new Architecture(System.getProperty("os.arch"));
+
+	private final String name;
+
+	public Architecture(String name) {
+		this.name = name;
+	}
 
 	public boolean is64Bit() {
 		return name.contains("64") || name.startsWith("armv8");
@@ -33,5 +39,9 @@ public record Architecture(String name) {
 
 	public boolean isArm() {
 		return name.startsWith("arm") || name.startsWith("aarch64");
+	}
+
+	public String getName() {
+		return name;
 	}
 }

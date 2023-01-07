@@ -28,167 +28,111 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.gradle.api.Project;
-import org.gradle.api.artifacts.Dependency;
-import org.gradle.api.artifacts.ModuleDependency;
+import org.gradle.api.artifacts.ExternalModuleDependency;
 
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.LoomRepositoryPlugin;
 import net.fabricmc.loom.configuration.providers.BundleMetadata;
-import net.fabricmc.loom.util.Architecture;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.OperatingSystem;
 
 public class MinecraftLibraryProvider {
 	private static final Pattern NATIVES_PATTERN = Pattern.compile("^(?<group>.*)/(.*?)/(?<version>.*)/((?<name>.*?)-(\\k<version>)-)(?<classifier>.*).jar$");
-	private static final boolean IS_MACOS = OperatingSystem.CURRENT_OS.equals(OperatingSystem.MAC_OS);
 
-	private final Project project;
-	private final MinecraftVersionMeta versionInfo;
-	private final BundleMetadata serverBundleMetadata;
-	private final boolean runtimeOnlyLog4j;
-	private final boolean provideClient;
-	private final boolean provideServer;
-
-	public MinecraftLibraryProvider(MinecraftProvider minecraftProvider, Project project) {
+	public void provide(MinecraftProvider minecraftProvider, Project project) {
 		final LoomGradleExtension extension = LoomGradleExtension.get(project);
 		final MinecraftJarConfiguration jarConfiguration = extension.getMinecraftJarConfiguration().get();
+		final MinecraftVersionMeta versionInfo = minecraftProvider.getVersionInfo();
+		final BundleMetadata serverBundleMetadata = minecraftProvider.getServerBundleMetadata();
+		final boolean runtimeOnlyLog4j = extension.getRuntimeOnlyLog4j().get();
 
-		this.project = project;
-		this.versionInfo = minecraftProvider.getVersionInfo();
-		this.serverBundleMetadata = minecraftProvider.getServerBundleMetadata();
-		this.runtimeOnlyLog4j = extension.getRuntimeOnlyLog4j().get();
-		this.provideClient = jarConfiguration.getSupportedEnvironments().contains("client");
-		this.provideServer = jarConfiguration.getSupportedEnvironments().contains("server");
-		assert provideClient || provideServer;
-	}
+		final boolean overrideLWJGL = LWJGLVersionOverride.overrideByDefault(versionInfo) || LWJGLVersionOverride.forceOverride(project) || Boolean.getBoolean("loom.test.lwjgloverride");
+		final boolean isMacOS = OperatingSystem.CURRENT_OS.equals(OperatingSystem.MAC_OS);
 
-	private void addDependency(String configuration, Object dependency) {
-		Dependency created = project.getDependencies().add(configuration, dependency);
-
-		// The launcher doesn't download transitive deps, so neither will we.
-		// This will also prevent a LaunchWrapper library dependency from pulling in outdated ASM jars.
-		if (created instanceof ModuleDependency md) {
-			md.setTransitive(false);
-		}
-	}
-
-	public void provide() {
-		if (provideClient) {
-			// Modern 1.19 version put the natives on the classpath.
-			final boolean hasNativesToExtract = versionInfo.hasNativesToExtract();
-			final boolean overrideLWJGL = hasNativesToExtract && (LWJGLVersionOverride.overrideByDefault(versionInfo) || LWJGLVersionOverride.forceOverride(project) || Boolean.getBoolean("loom.test.lwjgloverride"));
-
-			if (overrideLWJGL) {
-				project.getLogger().warn("Loom is upgrading Minecraft's LWJGL version to {}", LWJGLVersionOverride.LWJGL_VERSION);
-			}
-
-			if (hasNativesToExtract) {
-				// Create a configuration for
-				project.getConfigurations().register(Constants.Configurations.MINECRAFT_NATIVES, configuration -> configuration.setTransitive(false));
-			}
-
-			provideClientLibraries(overrideLWJGL, hasNativesToExtract);
-
-			if (overrideLWJGL) {
-				LWJGLVersionOverride.applyOverrides(project, IS_MACOS);
-			}
+		if (overrideLWJGL) {
+			project.getLogger().warn("Loom is upgrading Minecraft's LWJGL version to {}", LWJGLVersionOverride.LWJGL_VERSION);
 		}
 
-		if (provideServer) {
-			provideServerLibraries();
-		}
-	}
-
-	private void provideClientLibraries(boolean overrideLWJGL, boolean hasNativesToExtract) {
-		final boolean isArm = Architecture.CURRENT.isArm();
-		final boolean classpathArmNatives = !hasNativesToExtract && isArm && !IS_MACOS;
-
-		if (classpathArmNatives) {
-			LoomRepositoryPlugin.forceLWJGLFromMavenCentral(project);
+		if (versionInfo.hasNativesToExtract()) {
+			extension.createLazyConfiguration(Constants.Configurations.MINECRAFT_NATIVES, configuration -> configuration.setTransitive(false));
 		}
 
 		for (MinecraftVersionMeta.Library library : versionInfo.libraries()) {
 			if (overrideLWJGL && library.name().startsWith("org.lwjgl")) {
-				// Skip over Minecraft's LWJGL version, will will replace this with a newer version later.
 				continue;
 			}
 
 			if (library.isValidForOS() && !library.hasNatives() && library.artifact() != null) {
-				final String name = library.name();
-
-				if ("org.lwjgl.lwjgl:lwjgl:2.9.1-nightly-20130708-debug3".equals(name) || "org.lwjgl.lwjgl:lwjgl:2.9.1-nightly-20131017".equals(name)) {
-					// 1.4.7 contains an LWJGL version with an invalid maven pom, set the metadata sources to not use the pom for this version.
+				// 1.4.7 contains an LWJGL version with an invalid maven pom, set the metadata sources to not use the pom for this version.
+				if ("org.lwjgl.lwjgl:lwjgl:2.9.1-nightly-20130708-debug3".equals(library.name()) || "org.lwjgl.lwjgl:lwjgl:2.9.1-nightly-20131017".equals(library.name())) {
 					LoomRepositoryPlugin.setupForLegacyVersions(project);
-				}
-
-				if (name.startsWith("org.ow2.asm:asm-all")) {
+				} else if (library.name().startsWith("org.ow2.asm:asm-all")) {
 					// Don't want asm-all, use the modern split version.
 					continue;
 				}
 
-				if (runtimeOnlyLog4j && name.startsWith("org.apache.logging.log4j")) {
+				if (runtimeOnlyLog4j && library.name().startsWith("org.apache.logging.log4j")) {
 					// Make log4j a runtime only dep to force slf4j.
-					addDependency(Constants.Configurations.MINECRAFT_RUNTIME_DEPENDENCIES, name);
-					continue;
+					project.getDependencies().add(Constants.Configurations.MINECRAFT_RUNTIME_DEPENDENCIES, library.name());
+				} else if (serverBundleMetadata != null && isLibraryInBundle(serverBundleMetadata, library)) {
+					project.getDependencies().add(Constants.Configurations.MINECRAFT_SERVER_DEPENDENCIES, library.name());
+				} else if (jarConfiguration.getSupportedEnvironments().contains("client")) {
+					// Client only library, or legacy version
+					project.getDependencies().add(Constants.Configurations.MINECRAFT_DEPENDENCIES, library.name());
+				} else {
+					project.getLogger().debug("Minecraft library ({}) was not added to any configuration", library.name());
 				}
-
-				if (classpathArmNatives && name.startsWith("org.lwjgl:")
-						&& (name.endsWith("natives-windows") || name.endsWith("natives-linux"))) {
-					// Add windows and Linux arm64 natives for modern classpath native MC versions.
-					addDependency(Constants.Configurations.MINECRAFT_DEPENDENCIES, name + "-arm64");
-				}
-
-				addDependency(Constants.Configurations.MINECRAFT_DEPENDENCIES, name);
 			}
 
 			if (library.hasNativesForOS()) {
-				provideNativesForLibrary(library, overrideLWJGL, IS_MACOS);
-			}
-		}
-	}
+				MinecraftVersionMeta.Download nativeDownload = library.classifierForOS();
 
-	private void provideServerLibraries() {
-		if (serverBundleMetadata != null) {
-			for (BundleMetadata.Entry library : serverBundleMetadata.libraries()) {
-				if (runtimeOnlyLog4j && library.name().startsWith("org.apache.logging.log4j")) {
-					// Make log4j a runtime only dep to force slf4j.
-					addDependency(Constants.Configurations.MINECRAFT_RUNTIME_DEPENDENCIES, library.name());
+				if (nativeDownload == null) {
 					continue;
 				}
 
-				addDependency(Constants.Configurations.MINECRAFT_SERVER_DEPENDENCIES, library.name());
+				final String path = nativeDownload.path();
+				final Matcher matcher = NATIVES_PATTERN.matcher(path);
+
+				if (!matcher.find()) {
+					project.getLogger().warn("Failed to match regex for natives path : " + path);
+					continue;
+				}
+
+				final String group = matcher.group("group").replace("/", ".");
+				final String name = matcher.group("name");
+				final String version = matcher.group("version");
+				final String classifier = matcher.group("classifier");
+
+				final String dependencyNotation = "%s:%s:%s:%s".formatted(group, name, version, classifier);
+
+				if (overrideLWJGL && isMacOS && "java-objc-bridge".equals(name)) {
+					// Mojang split out the natives into their own jar, skip over Mojang's jar and use the official jar later on.
+					continue;
+				}
+
+				project.getLogger().debug("Add native dependency '{}'", dependencyNotation);
+				project.getDependencies().add(Constants.Configurations.MINECRAFT_NATIVES, dependencyNotation);
 			}
+		}
+
+		if (overrideLWJGL) {
+			LWJGLVersionOverride.DEPENDENCIES.forEach(s -> project.getDependencies().add(Constants.Configurations.MINECRAFT_DEPENDENCIES, s));
+			LWJGLVersionOverride.NATIVES.forEach(s -> project.getDependencies().add(Constants.Configurations.MINECRAFT_NATIVES, s));
+
+			if (isMacOS) {
+				LWJGLVersionOverride.MACOS_DEPENDENCIES.forEach(s -> project.getDependencies().add(Constants.Configurations.MINECRAFT_DEPENDENCIES, s));
+				LWJGLVersionOverride.MACOS_NATIVES.forEach(s -> project.getDependencies().add(Constants.Configurations.MINECRAFT_NATIVES, s));
+			}
+
+			// Add the native support mod that fixes a handful of issues related to the LWJGL update at runtime.
+			ExternalModuleDependency dependency = (ExternalModuleDependency) project.getDependencies().create(Constants.Dependencies.NATIVE_SUPPORT + Constants.Dependencies.Versions.NATIVE_SUPPORT_VERSION);
+			dependency.setTransitive(false);
+			project.getDependencies().add("modLocalRuntime", dependency);
 		}
 	}
 
-	private void provideNativesForLibrary(MinecraftVersionMeta.Library library, boolean overrideLWJGL, boolean isMacOS) {
-		MinecraftVersionMeta.Download nativeDownload = library.classifierForOS();
-
-		if (nativeDownload == null) {
-			return;
-		}
-
-		final String path = nativeDownload.path();
-		final Matcher matcher = NATIVES_PATTERN.matcher(path);
-
-		if (!matcher.find()) {
-			project.getLogger().warn("Failed to match regex for natives path : " + path);
-			return;
-		}
-
-		final String group = matcher.group("group").replace("/", ".");
-		final String name = matcher.group("name");
-		final String version = matcher.group("version");
-		final String classifier = matcher.group("classifier");
-
-		final String dependencyNotation = "%s:%s:%s:%s".formatted(group, name, version, classifier);
-
-		if (overrideLWJGL && isMacOS && "java-objc-bridge".equals(name)) {
-			// Mojang split out the natives into their own jar, skip over Mojang's jar and use the official jar later on.
-			return;
-		}
-
-		project.getLogger().debug("Add native dependency '{}'", dependencyNotation);
-		addDependency(Constants.Configurations.MINECRAFT_NATIVES, dependencyNotation);
+	private static boolean isLibraryInBundle(BundleMetadata bundleMetadata, MinecraftVersionMeta.Library library) {
+		return bundleMetadata.libraries().stream().anyMatch(entry -> entry.name().equals(library.name()));
 	}
 }

@@ -37,16 +37,14 @@ import org.cadixdev.lorenz.MappingSet;
 import org.cadixdev.mercury.Mercury;
 import org.cadixdev.mercury.remapper.MercuryRemapper;
 import org.gradle.api.Project;
-import org.gradle.api.internal.project.ProjectInternal;
-import org.gradle.internal.logging.progress.ProgressLogger;
-import org.gradle.internal.logging.progress.ProgressLoggerFactory;
 import org.slf4j.Logger;
 
 import net.fabricmc.loom.LoomGradleExtension;
-import net.fabricmc.loom.api.RemapConfigurationSettings;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.build.IntermediaryNamespaces;
+import net.fabricmc.loom.configuration.RemappedConfigurationEntry;
 import net.fabricmc.loom.configuration.providers.mappings.MappingsProviderImpl;
+import net.fabricmc.loom.util.gradle.ProgressLoggerHelper;
 import net.fabricmc.lorenztiny.TinyMappingsReader;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
 
@@ -54,7 +52,7 @@ public class SourceRemapper {
 	private final Project project;
 	private String from;
 	private String to;
-	private final List<Consumer<ProgressLogger>> remapTasks = new ArrayList<>();
+	private final List<Consumer<ProgressLoggerHelper>> remapTasks = new ArrayList<>();
 
 	private Mercury mercury;
 
@@ -70,12 +68,11 @@ public class SourceRemapper {
 
 	public static void remapSources(Project project, File input, File output, String from, String to, boolean reproducibleFileOrder, boolean preserveFileTimestamps) {
 		SourceRemapper sourceRemapper = new SourceRemapper(project, from, to);
-		sourceRemapper.scheduleRemapSources(input, output, reproducibleFileOrder, preserveFileTimestamps, () -> {
-		});
+		sourceRemapper.scheduleRemapSources(input, output, reproducibleFileOrder, preserveFileTimestamps);
 		sourceRemapper.remapAll();
 	}
 
-	public void scheduleRemapSources(File source, File destination, boolean reproducibleFileOrder, boolean preserveFileTimestamps, Runnable completionCallback) {
+	public void scheduleRemapSources(File source, File destination, boolean reproducibleFileOrder, boolean preserveFileTimestamps) {
 		remapTasks.add((logger) -> {
 			try {
 				logger.progress("remapping sources - " + source.getName());
@@ -84,7 +81,6 @@ public class SourceRemapper {
 
 				// Set the remapped sources creation date to match the sources if we're likely succeeded in making it
 				destination.setLastModified(source.lastModified());
-				completionCallback.run();
 			} catch (Exception e) {
 				// Failed to remap, lets clean up to ensure we try again next time
 				destination.delete();
@@ -100,8 +96,7 @@ public class SourceRemapper {
 
 		project.getLogger().lifecycle(":remapping sources");
 
-		ProgressLoggerFactory progressLoggerFactory = ((ProjectInternal) project).getServices().get(ProgressLoggerFactory.class);
-		ProgressLogger progressLogger = progressLoggerFactory.newOperation(SourceRemapper.class.getName());
+		ProgressLoggerHelper progressLogger = ProgressLoggerHelper.getProgressFactory(project, SourceRemapper.class.getName());
 		progressLogger.start("Remapping dependency sources", "sources");
 
 		remapTasks.forEach(consumer -> consumer.accept(progressLogger));
@@ -254,29 +249,19 @@ public class SourceRemapper {
 		m.setGracefulClasspathChecks(true);
 		m.setSourceCompatibility(Constants.MERCURY_SOURCE_VERSION);
 
-		final List<Path> classPath = new ArrayList<>();
-
 		for (File file : project.getConfigurations().getByName(Constants.Configurations.LOADER_DEPENDENCIES).getFiles()) {
-			classPath.add(file.toPath());
+			m.getClassPath().add(file.toPath());
 		}
 
 		if (!toNamed) {
 			for (File file : project.getConfigurations().getByName("compileClasspath").getFiles()) {
-				classPath.add(file.toPath());
+				m.getClassPath().add(file.toPath());
 			}
 		} else {
-			final LoomGradleExtension extension = LoomGradleExtension.get(project);
-
-			for (RemapConfigurationSettings entry : extension.getRemapConfigurations()) {
-				for (File inputFile : entry.getSourceConfiguration().get().getFiles()) {
-					classPath.add(inputFile.toPath());
+			for (RemappedConfigurationEntry entry : Constants.MOD_COMPILE_ENTRIES) {
+				for (File inputFile : project.getConfigurations().getByName(entry.sourceConfiguration()).getFiles()) {
+					m.getClassPath().add(inputFile.toPath());
 				}
-			}
-		}
-
-		for (Path path : classPath) {
-			if (Files.exists(path)) {
-				m.getClassPath().add(path);
 			}
 		}
 

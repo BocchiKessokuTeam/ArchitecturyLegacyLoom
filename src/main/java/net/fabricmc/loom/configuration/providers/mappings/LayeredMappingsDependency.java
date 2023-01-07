@@ -88,7 +88,7 @@ public class LayeredMappingsDependency extends AbstractModuleDependency implemen
 		Path mappingsDir = mappingContext.minecraftProvider().dir("layered").toPath();
 		Path mappingsFile = mappingsDir.resolve(String.format("%s.%s-%s.tiny", GROUP, MODULE, getVersion()));
 
-		if (!Files.exists(mappingsFile) || mappingContext.refreshDeps()) {
+		if (!Files.exists(mappingsFile) || LoomGradlePlugin.refreshDeps) {
 			try {
 				var processor = new LayeredMappingsProcessor(layeredMappingSpec);
 				List<MappingLayer> layers = processor.resolveLayers(mappingContext);

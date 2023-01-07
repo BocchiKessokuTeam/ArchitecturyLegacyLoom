@@ -24,18 +24,14 @@
 
 package net.fabricmc.loom.configuration.providers.mappings.mojmap;
 
-import java.io.UncheckedIOException;
-import java.nio.file.Path;
-
 import net.fabricmc.loom.api.mappings.layered.MappingContext;
 import net.fabricmc.loom.api.mappings.layered.spec.MappingsSpec;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftVersionMeta;
-import net.fabricmc.loom.util.download.DownloadException;
 
 public record MojangMappingsSpec(SilenceLicenseOption silenceLicense, boolean nameSyntheticMembers) implements MappingsSpec<MojangMappingLayer> {
 	// Keys in dependency manifest
-	private static final String MANIFEST_CLIENT_MAPPINGS = "client_mappings";
-	private static final String MANIFEST_SERVER_MAPPINGS = "server_mappings";
+	public static final String MANIFEST_CLIENT_MAPPINGS = "client_mappings";
+	public static final String MANIFEST_SERVER_MAPPINGS = "server_mappings";
 
 	public MojangMappingsSpec(SilenceLicenseSupplier supplier, boolean nameSyntheticMembers) {
 		this(new SilenceLicenseOption(supplier), nameSyntheticMembers);
@@ -75,33 +71,17 @@ public record MojangMappingsSpec(SilenceLicenseOption silenceLicense, boolean na
 
 	@Override
 	public MojangMappingLayer createLayer(MappingContext context) {
-		final MinecraftVersionMeta versionInfo = context.minecraftProvider().getVersionInfo();
-		final MinecraftVersionMeta.Download clientDownload = versionInfo.download(MANIFEST_CLIENT_MAPPINGS);
-		final MinecraftVersionMeta.Download serverDownload = versionInfo.download(MANIFEST_SERVER_MAPPINGS);
+		MinecraftVersionMeta versionInfo = context.minecraftProvider().getVersionInfo();
 
-		if (clientDownload == null) {
+		if (versionInfo.download(MANIFEST_CLIENT_MAPPINGS) == null) {
 			throw new RuntimeException("Failed to find official mojang mappings for " + context.minecraftVersion());
-		}
-
-		final Path clientMappings = context.workingDirectory("mojang").resolve("client.txt");
-		final Path serverMappings = context.workingDirectory("mojang").resolve("server.txt");
-
-		try {
-			context.download(clientDownload.url())
-					.sha1(clientDownload.sha1())
-					.downloadPath(clientMappings);
-
-			context.download(serverDownload.url())
-					.sha1(serverDownload.sha1())
-					.downloadPath(serverMappings);
-		} catch (DownloadException e) {
-			throw new UncheckedIOException("Failed to download mappings", e);
 		}
 
 		return new MojangMappingLayer(
 				context.minecraftVersion(),
-				clientMappings,
-				serverMappings,
+				versionInfo.download(MANIFEST_CLIENT_MAPPINGS),
+				versionInfo.download(MANIFEST_SERVER_MAPPINGS),
+				context.workingDirectory("mojang"),
 				nameSyntheticMembers(),
 				context.getLogger(),
 				silenceLicense()

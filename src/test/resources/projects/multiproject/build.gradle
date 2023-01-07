@@ -35,6 +35,10 @@ allprojects {
 		archiveClassifier.set "dev"
 	}
 
+	loom {
+		shareCaches()
+	}
+
 	java {
 		withSourcesJar()
 	}

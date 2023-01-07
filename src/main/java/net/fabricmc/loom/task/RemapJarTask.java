@@ -24,45 +24,63 @@
 
 package net.fabricmc.loom.task;
 
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.Serializable;
+import java.io.UncheckedIOException;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.FileSystem;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.jar.Attributes;
+import java.util.jar.JarFile;
+import java.util.jar.Manifest;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 import javax.inject.Inject;
 
+import com.google.common.base.Preconditions;
 import com.google.common.base.Suppliers;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import dev.architectury.loom.extensions.ModBuildExtensions;
-import dev.architectury.loom.metadata.QuiltModJson;
 import dev.architectury.tinyremapper.OutputConsumerPath;
 import dev.architectury.tinyremapper.TinyRemapper;
+import org.cadixdev.at.AccessTransformSet;
+import org.cadixdev.at.io.AccessTransformFormats;
+import org.cadixdev.lorenz.MappingSet;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.provider.ListProperty;
+import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
-import org.gradle.api.provider.Provider;
 import org.gradle.api.provider.SetProperty;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.Internal;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskAction;
-import org.gradle.api.tasks.TaskDependency;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -70,34 +88,40 @@ import net.fabricmc.accesswidener.AccessWidenerReader;
 import net.fabricmc.accesswidener.AccessWidenerRemapper;
 import net.fabricmc.accesswidener.AccessWidenerWriter;
 import net.fabricmc.loom.LoomGradleExtension;
+import net.fabricmc.loom.LoomGradlePlugin;
 import net.fabricmc.loom.build.MixinRefmapHelper;
 import net.fabricmc.loom.build.nesting.IncludedJarFactory;
-import net.fabricmc.loom.build.nesting.IncludedJarFactory.LazyNestedFile;
-import net.fabricmc.loom.build.nesting.IncludedJarFactory.NestedFile;
 import net.fabricmc.loom.build.nesting.JarNester;
 import net.fabricmc.loom.configuration.accesswidener.AccessWidenerFile;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftSourceSets;
 import net.fabricmc.loom.extension.MixinExtension;
+import net.fabricmc.loom.task.service.JarManifestService;
 import net.fabricmc.loom.task.service.MappingsService;
 import net.fabricmc.loom.task.service.TinyRemapperService;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.ExceptionUtil;
+import net.fabricmc.loom.util.FileSystemUtil;
+import net.fabricmc.loom.util.LfWriter;
 import net.fabricmc.loom.util.ModPlatform;
-import net.fabricmc.loom.util.ModUtils;
 import net.fabricmc.loom.util.Pair;
 import net.fabricmc.loom.util.SidedClassVisitor;
 import net.fabricmc.loom.util.ZipUtils;
+import net.fabricmc.loom.util.aw2at.Aw2At;
 import net.fabricmc.loom.util.service.UnsafeWorkQueueHelper;
+import net.fabricmc.lorenztiny.TinyMappingsReader;
 
 public abstract class RemapJarTask extends AbstractRemapJarTask {
+	public static final String MANIFEST_PATH = "META-INF/MANIFEST.MF";
+	public static final String MANIFEST_NAMESPACE_KEY = "Fabric-Mapping-Namespace";
+
 	@InputFiles
 	public abstract ConfigurableFileCollection getNestedJars();
 
 	@Input
-	public abstract ListProperty<NestedFile> getForgeNestedJars();
+	public abstract Property<Boolean> getAddNestedDependencies();
 
 	@Input
-	public abstract Property<Boolean> getAddNestedDependencies();
+	public abstract Property<Boolean> getIncludesClientOnlyClasses();
 
 	/**
 	 * Gets the jar paths to the access wideners that will be converted to ATs for Forge runtime.
@@ -138,22 +162,13 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 		getClasspath().from(getProject().getConfigurations().getByName(JavaPlugin.COMPILE_CLASSPATH_CONFIGURATION_NAME));
 		getAddNestedDependencies().convention(true).finalizeValueOnRead();
+		getIncludesClientOnlyClasses().convention(false).finalizeValueOnRead();
 		getReadMixinConfigsFromManifest().convention(LoomGradleExtension.get(getProject()).isForge()).finalizeValueOnRead();
 		getInjectAccessWidener().convention(false);
 
-		Configuration includeConfiguration = getProject().getConfigurations().getByName(Constants.Configurations.INCLUDE);
-		IncludedJarFactory factory = new IncludedJarFactory(getProject());
-
-		if (!LoomGradleExtension.get(getProject()).isForge()) {
-			getNestedJars().from(factory.getNestedJars(includeConfiguration));
-		} else {
-			Provider<Pair<List<LazyNestedFile>, TaskDependency>> forgeNestedJars = factory.getForgeNestedJars(includeConfiguration);
-			getForgeNestedJars().value(forgeNestedJars.map(Pair::left).map(pairs -> {
-				return pairs.stream()
-						.map(LazyNestedFile::resolve)
-						.toList();
-			}));
-			getNestedJars().builtBy(forgeNestedJars.map(Pair::right));
+		if (LoomGradleExtension.get(getProject()).supportsInclude()) {
+			Configuration includeConfiguration = getProject().getConfigurations().getByName(Constants.Configurations.INCLUDE);
+			getNestedJars().from(new IncludedJarFactory(getProject()).getNestedJars(includeConfiguration));
 		}
 
 		setupPreparationTask();
@@ -180,14 +195,11 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		final LoomGradleExtension extension = LoomGradleExtension.get(getProject());
 
 		submitWork(RemapAction.class, params -> {
-			if (getAddNestedDependencies().get()) {
+			if (extension.supportsInclude() && getAddNestedDependencies().get()) {
 				params.getNestedJars().from(getNestedJars());
-
-				if (extension.isForge()) {
-					params.getForgeNestedJars().set(getForgeNestedJars());
-				}
 			}
 
+			params.getJarManifestService().set(JarManifestService.get(getProject()));
 			params.getTinyRemapperBuildServiceUuid().set(UnsafeWorkQueueHelper.create(getProject(), tinyRemapperService.get()));
 			params.getRemapClasspath().from(getClasspath());
 
@@ -212,6 +224,20 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 			if (!getAtAccessWideners().get().isEmpty()) {
 				params.getMappingBuildServiceUuid().set(UnsafeWorkQueueHelper.create(getProject(), MappingsService.createDefault(getProject(), getSourceNamespace().get(), getTargetNamespace().get())));
 			}
+
+			if (getIncludesClientOnlyClasses().get()) {
+				if (!extension.areEnvironmentSourceSetsSplit()) {
+					throw new UnsupportedOperationException("Jar cannot include client only classes as the sources are not split");
+				}
+
+				final List<String> clientOnlyJarEntries = getClientOnlyJarEntries();
+				params.getManifestAttributes().set(Map.of(
+						"Fabric-Loom-Split-Environment", "true",
+						"Fabric-Loom-Client-Only-Entries", String.join(";", clientOnlyJarEntries)
+				));
+
+				params.getClientOnlyClasses().set(clientOnlyJarEntries.stream().filter(s -> s.endsWith(".class")).toList());
+			}
 		});
 	}
 
@@ -220,7 +246,7 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		final MixinExtension mixinExtension = extension.getMixin();
 		Collection<String> allMixinConfigs = null;
 
-		final JsonObject fabricModJson = extension.getPlatform().get() == ModPlatform.FABRIC ? ModUtils.getFabricModJson(getInputFile().getAsFile().get().toPath()) : null;
+		final JsonObject fabricModJson = extension.getPlatform().get() == ModPlatform.FABRIC ? MixinRefmapHelper.readFabricModJson(getInputFile().getAsFile().get()) : null;
 
 		if (fabricModJson == null) {
 			if (extension.getPlatform().get() == ModPlatform.QUILT) {
@@ -228,7 +254,22 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 					byte[] bytes = ZipUtils.unpackNullable(getInputFile().getAsFile().get().toPath(), "quilt.mod.json");
 
 					if (bytes != null) {
-						allMixinConfigs = QuiltModJson.of(bytes).getMixinConfigs();
+						JsonObject json = LoomGradlePlugin.GSON.fromJson(new InputStreamReader(new ByteArrayInputStream(bytes)), JsonObject.class);
+						JsonElement mixins = json.has("mixin") ? json.get("mixin") : json.get("mixins");
+
+						if (mixins != null) {
+							if (mixins.isJsonPrimitive()) {
+								allMixinConfigs = Collections.singletonList(mixins.getAsString());
+							} else if (mixins.isJsonArray()) {
+								allMixinConfigs = StreamSupport.stream(mixins.getAsJsonArray().spliterator(), false)
+										.map(JsonElement::getAsString)
+										.collect(Collectors.toList());
+							} else {
+								throw new RuntimeException("Unknown mixin type: " + mixins.getClass().getName());
+							}
+						} else {
+							allMixinConfigs = Collections.emptyList();
+						}
 					}
 				} catch (IOException e) {
 					throw new RuntimeException("Cannot read file quilt.mod.json in the jar.", e);
@@ -236,7 +277,7 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 			}
 
 			if (allMixinConfigs == null && getReadMixinConfigsFromManifest().get()) {
-				allMixinConfigs = ModBuildExtensions.readMixinConfigsFromManifest(getInputFile().get().getAsFile());
+				allMixinConfigs = readMixinConfigsFromManifest();
 			}
 
 			if (allMixinConfigs == null) {
@@ -272,11 +313,29 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		}
 	}
 
+	private Collection<String> readMixinConfigsFromManifest() {
+		File inputJar = getInputFile().get().getAsFile();
+
+		try (JarFile jar = new JarFile(inputJar)) {
+			@Nullable Manifest manifest = jar.getManifest();
+
+			if (manifest != null) {
+				Attributes attributes = manifest.getMainAttributes();
+				String mixinConfigs = attributes.getValue(Constants.Forge.MIXIN_CONFIGS_MANIFEST_KEY);
+
+				if (mixinConfigs != null) {
+					return Set.of(mixinConfigs.split(","));
+				}
+			}
+
+			return Set.of();
+		} catch (IOException e) {
+			throw new UncheckedIOException("Could not read mixin configs from input jar", e);
+		}
+	}
+
 	public interface RemapParams extends AbstractRemapParams {
 		ConfigurableFileCollection getNestedJars();
-
-		ListProperty<NestedFile> getForgeNestedJars();
-
 		ConfigurableFileCollection getRemapClasspath();
 
 		Property<ModPlatform> getPlatform();
@@ -290,8 +349,12 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		record RefmapData(List<String> mixinConfigs, String refmapName) implements Serializable { }
 		ListProperty<RefmapData> getMixinData();
 
+		Property<JarManifestService> getJarManifestService();
 		Property<String> getTinyRemapperBuildServiceUuid();
 		Property<String> getMappingBuildServiceUuid();
+
+		MapProperty<String, String> getManifestAttributes();
+		ListProperty<String> getClientOnlyClasses();
 	}
 
 	public abstract static class RemapAction extends AbstractRemapAction<RemapParams> {
@@ -313,7 +376,7 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 				remap();
 
-				if (getParameters().getClientOnlyEntries().isPresent()) {
+				if (getParameters().getClientOnlyClasses().isPresent()) {
 					markClientOnlyClasses();
 				}
 
@@ -323,7 +386,7 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 				addRefmaps();
 				addNestedJars();
-				ModBuildExtensions.convertAwToAt(getParameters().getAtAccessWideners(), outputFile, getParameters().getMappingBuildServiceUuid());
+				convertAwToAt();
 
 				if (getParameters().getPlatform().get() != ModPlatform.FORGE) {
 					modifyJarManifest();
@@ -351,7 +414,7 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		}
 
 		private void markClientOnlyClasses() throws IOException {
-			final Stream<Pair<String, ZipUtils.UnsafeUnaryOperator<byte[]>>> tranformers = getParameters().getClientOnlyEntries().get().stream()
+			final Stream<Pair<String, ZipUtils.UnsafeUnaryOperator<byte[]>>> tranformers = getParameters().getClientOnlyClasses().get().stream()
 					.map(s -> new Pair<>(s,
 							(ZipUtils.AsmClassOperator) classVisitor -> SidedClassVisitor.CLIENT.insertApplyVisitor(null, classVisitor)
 					));
@@ -397,6 +460,55 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 			ZipUtils.replace(outputFile, accessWidenerFile.path(), remapped);
 		}
 
+		private void convertAwToAt() throws IOException {
+			if (!this.getParameters().getAtAccessWideners().isPresent()) {
+				return;
+			}
+
+			Set<String> atAccessWideners = this.getParameters().getAtAccessWideners().get();
+
+			if (atAccessWideners.isEmpty()) {
+				return;
+			}
+
+			AccessTransformSet at = AccessTransformSet.create();
+			File jar = outputFile.toFile();
+
+			try (FileSystemUtil.Delegate fileSystem = FileSystemUtil.getJarFileSystem(jar, false)) {
+				FileSystem fs = fileSystem.get();
+				Path atPath = fs.getPath(Constants.Forge.ACCESS_TRANSFORMER_PATH);
+
+				if (Files.exists(atPath)) {
+					throw new FileAlreadyExistsException("Jar " + jar + " already contains an access transformer - cannot convert AWs!");
+				}
+
+				for (String aw : atAccessWideners) {
+					Path awPath = fs.getPath(aw);
+
+					if (Files.notExists(awPath)) {
+						throw new NoSuchFileException("Could not find AW '" + aw + "' to convert into AT!");
+					}
+
+					try (BufferedReader reader = Files.newBufferedReader(awPath, StandardCharsets.UTF_8)) {
+						at.merge(Aw2At.toAccessTransformSet(reader));
+					}
+
+					Files.delete(awPath);
+				}
+
+				MappingsService service = UnsafeWorkQueueHelper.get(getParameters().getMappingBuildServiceUuid(), MappingsService.class);
+
+				try (TinyMappingsReader reader = new TinyMappingsReader(service.getMemoryMappingTree(), service.getFromNamespace(), service.getToNamespace())) {
+					MappingSet mappingSet = reader.read();
+					at = at.remap(mappingSet);
+				}
+
+				try (Writer writer = new LfWriter(Files.newBufferedWriter(atPath))) {
+					AccessTransformFormats.FML.write(writer, at);
+				}
+			}
+		}
+
 		private byte[] remapAccessWidener(byte[] input) {
 			int version = AccessWidenerReader.readVersion(input);
 
@@ -415,16 +527,28 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 		private void addNestedJars() {
 			FileCollection nestedJars = getParameters().getNestedJars();
-			ListProperty<NestedFile> forgeNestedJars = getParameters().getForgeNestedJars();
 
-			if (nestedJars.isEmpty() && (!forgeNestedJars.isPresent() || forgeNestedJars.get().isEmpty())) {
+			if (nestedJars.isEmpty()) {
 				LOGGER.info("No jars to nest");
 				return;
 			}
 
-			Set<File> jars = new HashSet<>(nestedJars.getFiles());
-			jars.addAll(forgeNestedJars.get().stream().map(NestedFile::file).toList());
-			JarNester.nestJars(jars, forgeNestedJars.getOrElse(List.of()), outputFile.toFile(), getParameters().getPlatform().get(), LOGGER);
+			JarNester.nestJars(nestedJars.getFiles(), outputFile.toFile(), getParameters().getPlatform().get(), LOGGER);
+		}
+
+		private void modifyJarManifest() throws IOException {
+			int count = ZipUtils.transform(outputFile, Map.of(MANIFEST_PATH, bytes -> {
+				var manifest = new Manifest(new ByteArrayInputStream(bytes));
+
+				getParameters().getJarManifestService().get().apply(manifest, getParameters().getManifestAttributes().get());
+				manifest.getMainAttributes().putValue(MANIFEST_NAMESPACE_KEY, getParameters().getTargetNamespace().get());
+
+				ByteArrayOutputStream out = new ByteArrayOutputStream();
+				manifest.write(out);
+				return out.toByteArray();
+			}));
+
+			Preconditions.checkState(count > 0, "Did not transform any jar manifest");
 		}
 
 		private void addRefmaps() throws IOException {
@@ -444,8 +568,7 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		}
 	}
 
-	@Override
-	protected List<String> getClientOnlyEntries() {
+	private List<String> getClientOnlyJarEntries() {
 		final SourceSet clientSourceSet = MinecraftSourceSets.Split.getClientSourceSet(getProject());
 
 		final ConfigurableFileCollection output = getProject().getObjects().fileCollection();
@@ -460,6 +583,33 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		return output.getAsFileTree().getFiles().stream()
 				.map(relativePath(rootPaths))
 				.toList();
+	}
+
+	private static List<String> getRootPaths(Set<File> files) {
+		return files.stream()
+			.map(root -> {
+				String rootPath = root.getAbsolutePath().replace("\\", "/");
+
+				if (rootPath.charAt(rootPath.length() - 1) != '/') {
+					rootPath += '/';
+				}
+
+				return rootPath;
+			}).toList();
+	}
+
+	private static Function<File, String> relativePath(List<String> rootPaths) {
+		return file -> {
+			String s = file.getAbsolutePath().replace("\\", "/");
+
+			for (String rootPath : rootPaths) {
+				if (s.startsWith(rootPath)) {
+					s = s.substring(rootPath.length());
+				}
+			}
+
+			return s;
+		};
 	}
 
 	@Internal

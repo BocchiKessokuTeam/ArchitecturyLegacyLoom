@@ -29,8 +29,6 @@ import java.util.Map;
 import com.google.common.collect.ImmutableMap;
 import com.google.gson.JsonObject;
 
-import net.fabricmc.loom.configuration.providers.forge.ConfigValue;
-
 public record McpConfigStep(String type, String name, Map<String, ConfigValue> config) {
 	private static final String TYPE_KEY = "type";
 	private static final String NAME_KEY = "name";

@@ -47,7 +47,6 @@ import org.gradle.api.publish.PublishingExtension;
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.util.DeprecationHelper;
 import net.fabricmc.loom.util.GroovyXmlUtil;
-import net.fabricmc.loom.util.gradle.GradleUtils;
 
 public final class MavenPublication {
 	// ImmutableMap is needed since it guarantees ordering
@@ -62,17 +61,17 @@ public final class MavenPublication {
 	}
 
 	public static void configure(Project project) {
-		GradleUtils.afterSuccessfulEvaluation(project, () -> {
+		project.afterEvaluate((p) -> {
 			AtomicBoolean reportedDeprecation = new AtomicBoolean(false);
 
 			CONFIGURATION_TO_SCOPE.forEach((configurationName, scope) -> {
-				Configuration config = project.getConfigurations().getByName(configurationName);
+				Configuration config = p.getConfigurations().getByName(configurationName);
 
 				// add modsCompile to maven-publish
-				PublishingExtension mavenPublish = project.getExtensions().findByType(PublishingExtension.class);
+				PublishingExtension mavenPublish = p.getExtensions().findByType(PublishingExtension.class);
 
 				if (mavenPublish != null) {
-					project.getLogger().info("Processing maven publication for project [" + project.getName() + "] of " + configurationName);
+					p.getLogger().info("Processing maven publication for project [" + p.getName() + "] of " + configurationName);
 					processEntry(project, scope, config, mavenPublish, reportedDeprecation);
 				}
 			});
@@ -89,6 +88,7 @@ public final class MavenPublication {
 		}
 	}
 
+	// TODO: Remove this in Loom 0.12
 	private static void processEntry(Project project, String scope, Configuration config, PublishingExtension mavenPublish, AtomicBoolean reportedDeprecation) {
 		mavenPublish.publications((publications) -> {
 			for (Publication publication : publications) {
@@ -100,7 +100,7 @@ public final class MavenPublication {
 					continue;
 				} else if (!reportedDeprecation.get() && !LoomGradleExtension.get(project).isForge()) {
 					DeprecationHelper deprecationHelper = LoomGradleExtension.get(project).getDeprecationHelper();
-					deprecationHelper.warn("Loom is applying dependency data manually to publications instead of using a software component (from(components[\"java\"])). This is deprecated.");
+					deprecationHelper.warn("Loom is applying dependency data manually to publications instead of using a software component (from(components[\"java\"])). This is deprecated and will be removed in Loom 0.13.");
 					reportedDeprecation.set(true);
 				}
 

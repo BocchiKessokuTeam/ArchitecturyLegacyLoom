@@ -47,9 +47,10 @@ import net.fabricmc.accesswidener.AccessWidenerRemapper;
 import net.fabricmc.accesswidener.AccessWidenerVisitor;
 import net.fabricmc.accesswidener.TransitiveOnlyFilter;
 import net.fabricmc.loom.LoomGradleExtension;
-import net.fabricmc.loom.api.RemapConfigurationSettings;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
+import net.fabricmc.loom.configuration.RemappedConfigurationEntry;
 import net.fabricmc.loom.configuration.processors.JarProcessor;
+import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.TinyRemapperHelper;
 
 /**
@@ -89,9 +90,13 @@ public class TransitiveAccessWidenerJarProcessor implements JarProcessor {
 		final List<AccessWidenerFile> accessWideners = new ArrayList<>();
 		final Set<Path> possibleModJars = new HashSet<>();
 
-		// Only apply global AWs from mods that are part of the compile classpath
-		for (RemapConfigurationSettings entry : extension.getCompileRemapConfigurations()) {
-			final Configuration configuration = entry.getSourceConfiguration().get();
+		for (RemappedConfigurationEntry entry : Constants.MOD_COMPILE_ENTRIES) {
+			// Only apply global AWs from mods that are part of the compile classpath
+			if (!entry.compileClasspath()) {
+				continue;
+			}
+
+			final Configuration configuration = extension.getLazyConfigurationProvider(entry.sourceConfiguration()).get();
 
 			// Based off the logic in ModCompileRemapper.
 			for (ResolvedArtifact artifact : configuration.getResolvedConfiguration().getResolvedArtifacts()) {

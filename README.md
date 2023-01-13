@@ -2,7 +2,7 @@
 
 ---
 
-A fork of [MsRandom's Loom fork]("https://github.com/MsRandom/architectury-loom/tree/0.12.0-legacyfg3") that is a fork of [Architectury Loom](https://github.com/architectury/architectury-loom) that supports the Legacy Forge modding toolchain.
+A fork of [MsRandom's Loom fork](https://github.com/MsRandom/architectury-loom/tree/0.12.0-legacyfg3) that is a fork of [Architectury Loom](https://github.com/architectury/architectury-loom) that supports the Legacy Forge modding toolchain.
 
 A [Gradle](https://gradle.org/) plugin to setup a deobfuscated development environment for Minecraft mods. Primarily used in the Fabric toolchain.
 
